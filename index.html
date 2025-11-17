@@ -17,7 +17,7 @@
 				align-items: center;
 				justify-content: center;
 				gap: 1rem;
-				background: linear-gradient(180deg, var(--page-bg-from), var(--page-bg-to));
+				background: #ffffee;
 				color: var(--text-color);
 				transition: background-color 0.4s ease, color 0.4s ease, background 0.4s ease;
 			}
@@ -47,6 +47,7 @@
 				--solved-badge-color: #ffffff;
 				--drop-circle-color: rgba(120, 120, 120, 0.75);
 				--pickup-pulse-color: rgba(20, 20, 20, 0.7);
+				background: linear-gradient(180deg, var(--page-bg-from), var(--page-bg-to));
 			}
 			body.theme-dark {
 				--page-bg-from: #07070b;
@@ -60,6 +61,7 @@
 				--solved-badge-color: #fff;
 				--drop-circle-color: rgba(255, 255, 255, 0.9);
 				--pickup-pulse-color: rgba(255, 255, 255, 0.95);
+				background: linear-gradient(180deg, var(--page-bg-from), var(--page-bg-to));
 			}
 			h1 {
 				margin: 0;
@@ -183,14 +185,36 @@
 				position: relative;
 				padding: 26px;
 				border-radius: 8px;
-				border: 1px solid rgba(0, 0, 0, 0.35);
+				border: none;
+				box-shadow: none;
+				overflow: hidden;
 				--light-x: 0;
 				--light-y: -1;
-				background:
-				radial-gradient(circle at calc(50% + var(--light-x) * 25px) calc(45% - var(--light-y) * 15px), var(--board-radial-from), var(--board-radial-to)),
-				url('board_texture.png');
+			}
+			.board-wrapper::before {
+				content: '';
+				position: absolute;
+				inset: 0;
+				border-radius: inherit;
+				background: url('board.webp') center/cover no-repeat;
 				background-size: cover;
-				background-blend-mode: overlay;
+				transform: scale(1.15);
+				transform-origin: center;
+				z-index: 0;
+				pointer-events: none;
+				opacity: 1;
+				transition: opacity 0.3s ease;
+			}
+			body.theme-light .board-wrapper::before,
+			body.theme-dark .board-wrapper::before {
+				opacity: 0;
+			}
+			body.theme-light .board-wrapper,
+			body.theme-dark .board-wrapper {
+				background:
+				radial-gradient(circle at calc(50% + var(--light-x) * 25px) calc(45% - var(--light-y) * 15px), var(--board-radial-from), var(--board-radial-to));
+				background-blend-mode: normal;
+				border: 1px solid rgba(0, 0, 0, 0.35);
 				box-shadow:
 				0 14px 30px rgba(0, 0, 0, 0.3),
 				calc(var(--light-x) * 34px) calc(var(--light-y) * 28px) 45px rgba(255, 255, 255, 0.45),
@@ -200,6 +224,7 @@
 				box-shadow: 0 0 35px rgba(0, 0, 0, 0.9),
 				calc(var(--light-x) * 34px) calc(var(--light-y) * 28px) 45px rgba(255, 255, 255, 0.45),
 				calc(var(--light-x) * -22px) calc(var(--light-y) * -18px) 38px rgba(8, 5, 2, 0.45);
+				transform: none;
 			}
 			.board-wrapper .win-overlay {
 				position: absolute;
@@ -251,17 +276,22 @@
 				width: clamp(260px, 34vw, 420px);
 				aspect-ratio: 1 / 1;
 				margin: 0 auto;
-				background-color: var(--board-bg-color);
-				background-image: url('board_texture_2.png');
-				background-size: cover;
-				background-position: center;
 				border-radius: 4px;
-				box-shadow: inset 0 5px 18px rgba(255, 255, 255, 0.35), inset 0 -5px 20px rgba(0, 0, 0, 0.4), 0 6px 15px rgba(0, 0, 0, 0.25);
 				overflow: hidden;
+				background: transparent;
+				z-index: 1;
 			}
 			.board-wrapper.solver-busy #board {
 				pointer-events: none;
 				cursor: progress;
+			}
+			body.theme-light #board {
+				background-image: none;
+				box-shadow: inset 0 4px 16px rgba(0, 0, 0, 0.18), 0 12px 18px rgba(0, 0, 0, 0.25);
+			}
+			body.theme-dark #board {
+				background-image: none;
+				box-shadow: inset 0 4px 16px rgba(0, 0, 0, 0.4), 0 12px 18px rgba(0, 0, 0, 0.45);
 			}
 			.solver-overlay {
 				position: absolute;
@@ -279,8 +309,8 @@
 			}
 			.hole {
 				position: absolute;
-				width: var(--hole-size, clamp(40px, 5vw, 60px));
-				height: var(--hole-size, clamp(40px, 5vw, 60px));
+				width: 10px;
+				height: 10px;
 				border-radius: 50%;
 				background: radial-gradient(circle, rgba(255, 255, 255, 0.6), rgba(220, 205, 170, 0.6) 55%, rgba(180, 145, 100, 0.4));
 				display: flex;
@@ -322,7 +352,7 @@
 				box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.8);
 			}
 			.hole.dragging .peg {
-				transform: translateY(-6px) scale(1.05);
+				transform: rotate(var(--peg-rotation, 0deg)) translateY(-6px) scale(1.05);
 			}
 			.hole.disabled {
 				opacity: 0;
@@ -333,24 +363,50 @@
 				transform: translate(-50%, -50%) scale(1.05);
 			}
 			.peg {
-				width: 40px;
-				height: 40px;
+				position: relative;
+				width: 30px;
+				height: 30px;
+				aspect-ratio: 1 / 1;
 				border-radius: 50%;
-				background: linear-gradient(145deg, #f0f0f0, #d9d4ce);
+				background: url('ball.webp') center/contain no-repeat;
+				background-size: contain;
 				box-shadow:
 				inset 0 3px 6px rgba(255, 255, 255, 0.75),
 				inset 0 -2px 4px rgba(0, 0, 0, 0.2),
 				0 4px 10px rgba(0, 0, 0, 0.25);
 				transition: transform 0.2s ease;
+				background-color: transparent;
+				transform: rotate(var(--peg-rotation, 0deg));
+				z-index: 1;
+			}
+			.peg::after {
+				display: none;
+				content: '';
+				position: absolute;
+				inset: 15%;
+				border-radius: 50%;
+				background: radial-gradient(circle, rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0) 60%);
+				transform: translate(var(--peg-shadow-x, 0px), var(--peg-shadow-y, 0px)) scale(1.05);
+				filter: blur(0.3px);
+				opacity: 0;
+				z-index: -1;
+				pointer-events: none;
+			}
+			body:not(.theme-light):not(.theme-dark) .peg::after {
+				opacity: 1;
 			}
 			.peg.ghost {
 				position: fixed;
 				z-index: 999;
 				pointer-events: none;
-				transform: translate(-50%, -50%);
+				transform: rotate(var(--peg-rotation, 0deg)) translate(-50%, -50%);
 				box-shadow:
 				inset 0 4px 8px rgba(255, 255, 255, 0.9),
 				0 6px 12px rgba(0, 0, 0, 0.6);
+			}
+			.peg.ghost::after {
+				opacity: 0;
+				box-shadow: none;
 			}
 			body.theme-dark .hole {
 				background: radial-gradient(circle at 30% 30%, rgba(81, 91, 110, 0.95), rgba(24, 27, 40, 0.95) 60%);
@@ -363,7 +419,8 @@
 				box-shadow:
 				inset 0 3px 6px rgba(255, 255, 255, 0.6),
 				inset 0 -2px 4px rgba(15, 18, 25, 0.6),
-				0 4px 8px rgba(0, 0, 0, 0.5);
+				0 4px 8px rgba(0, 0, 0, 0.5),
+				0 8px 20px rgba(0, 0, 0, 0.35);
 				border: 1px solid rgba(255, 255, 255, 0.25);
 			}
 			body.theme-light .hole {
@@ -375,7 +432,8 @@
 				box-shadow:
 				inset 0 4px 8px rgba(255, 255, 255, 0.85),
 				inset 0 -3px 5px rgba(0, 0, 0, 0.3),
-				0 4px 10px rgba(0, 0, 0, 0.35);
+				0 4px 10px rgba(0, 0, 0, 0.35),
+				0 8px 20px rgba(0, 0, 0, 0.25);
 			}
 			#status {
 				min-height: 1.5rem;
@@ -417,23 +475,6 @@
 			}
 			.board-actions.hidden,
 			.bottom-controls.hidden,
-			.auto-actions.hidden {
-				display: none;
-			}
-			body.theme-light .board-wrapper,
-			body.theme-dark .board-wrapper {
-				background:
-				radial-gradient(circle at calc(50% + var(--light-x) * 25px) calc(45% - var(--light-y) * 15px), var(--board-radial-from), var(--board-radial-to));
-				background-blend-mode: normal;
-			}
-			body.theme-light #board {
-				background-image: none;
-				box-shadow: inset 0 4px 16px rgba(0, 0, 0, 0.18), 0 12px 18px rgba(0, 0, 0, 0.25);
-			}
-			body.theme-dark #board {
-				background-image: none;
-				box-shadow: inset 0 4px 16px rgba(0, 0, 0, 0.4), 0 12px 18px rgba(0, 0, 0, 0.45);
-			}
 			.info-panel {
 				position: absolute;
 				inset: 8px;
@@ -460,6 +501,9 @@
 				opacity: 1;
 				transform: scale(1);
 				pointer-events: auto;
+			}
+			.auto-actions.hidden {
+				display: none;
 			}
 			.info-panel .info-links {
 				display: flex;
@@ -491,10 +535,10 @@
 				</div>
 				<div class="menu-handle"></div>
 			</div>
-		<div class="board-wrapper">
-			<div id="board"></div>
-			<svg class="solver-overlay" aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
-			<div class="win-overlay" aria-hidden="true"></div>
+			<div class="board-wrapper">
+				<div id="board"></div>
+				<svg class="solver-overlay" aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+				<div class="win-overlay" aria-hidden="true"></div>
 				<div id="info-panel" class="info-panel" aria-live="polite">
 					<p>
 						Kongming Chess (also known as Peg Solitaire, Solo Noble, Solo Goli, Marble Solitaire, or simply Solitaire)
