@@ -63,25 +63,25 @@
 			.content-row {
 				display: flex;
 				align-items: center;
-				gap: 2rem;
+				gap: clamp(1rem, 3vw, 2rem);
 				width: 100%;
-				max-width: 1100px;
-				padding: 0 1.5rem;
+				padding: 0 clamp(0.5rem, 2vw, 1.5rem);
 				box-sizing: border-box;
 				margin: 0 auto;
 				justify-content: center;
-				flex-wrap: wrap;
+				flex-wrap: nowrap;
+				-webkit-overflow-scrolling: touch;
 			}
 			.menu-panel {
 				position: relative;
 				display: flex;
 				align-items: center;
-				height: 260px;
-				padding-left: 20px;
+				height: clamp(200px, 28vw, 260px);
+				padding-left: clamp(12px, 2vw, 20px);
 				min-width: 120px;
 			}
 			.menu-panel.right {
-				padding-right: 20px;
+				padding-right: clamp(12px, 2vw, 20px);
 				padding-left: 0;
 			}
 			.menu-line {
@@ -98,10 +98,10 @@
 				flex-direction: column;
 				justify-content: space-between;
 				height: 100%;
-				margin-left: 20px;
+				margin-left: clamp(14px, 3vw, 20px);
 				text-transform: uppercase;
-				letter-spacing: 0.3em;
-				font-size: 0.75rem;
+				letter-spacing: clamp(0.2em, 0.8vw, 0.3em);
+				font-size: clamp(0.65rem, 1vw, 0.75rem);
 				font-weight: 600;
 				color: rgba(27, 27, 31, 0.6);
 			}
@@ -151,9 +151,9 @@
 			}
 			.menu-handle {
 				position: absolute;
-				left: 2px;
-				width: 30px;
-				height: 30px;
+				left: clamp(2px, 0.6vw, 2px);
+				width: clamp(28px, 4vw, 32px);
+				height: clamp(28px, 4vw, 32px);
 				border-radius: 50%;
 				border: 4px solid rgba(0, 0, 0, 0.25);
 				background: #ffffff;
@@ -192,8 +192,8 @@
 			}
 			body.theme-dark .board-wrapper {
 				box-shadow: 0 0 35px rgba(0, 0, 0, 0.9),
-				calc(var(--light-x) * 34px) calc(var(--light-y)) 45px rgba(255, 255, 255, 0.45),
-				calc(var(--light-x) * -22px) calc(var(--light-y) * -18px) 38px rgba(8, 5, 2, 0.45);
+					calc(var(--light-x) * 34px) calc(var(--light-y) * 28px) 45px rgba(255, 255, 255, 0.45),
+					calc(var(--light-x) * -22px) calc(var(--light-y) * -18px) 38px rgba(8, 5, 2, 0.45);
 			}
 			.board-wrapper .win-overlay {
 				position: absolute;
@@ -232,10 +232,10 @@
 			}
 			#board {
 				display: grid;
-				grid-template-columns: repeat(7, 60px);
-				grid-template-rows: repeat(7, 60px);
-				gap: 6px;
-				padding: 12px;
+				grid-template-columns: repeat(7, clamp(38px, 6vw, 60px));
+				grid-template-rows: repeat(7, clamp(38px, 6vw, 60px));
+				gap: clamp(4px, 0.6vw, 6px);
+				padding: clamp(8px, 1.2vw, 12px);
 				background-color: var(--board-bg-color);
 				background-image: url('board_texture.png');
 				background-size: cover;
@@ -244,8 +244,8 @@
 				box-shadow: inset 0 5px 18px rgba(255, 255, 255, 0.35), inset 0 -5px 20px rgba(0, 0, 0, 0.4), 0 6px 15px rgba(0, 0, 0, 0.25);
 			}
 			.hole {
-				width: 60px;
-				height: 60px;
+				width: clamp(40px, 5vw, 60px);
+				height: clamp(40px, 5vw, 60px);
 				border-radius: 50%;
 				background: radial-gradient(circle, rgba(255, 255, 255, 0.6), rgba(220, 205, 170, 0.6) 55%, rgba(180, 145, 100, 0.4));
 				display: flex;
@@ -254,10 +254,18 @@
 				transition: transform 0.2s ease, background 0.2s ease;
 				cursor: pointer;
 				box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+				touch-action: none;
+				user-select: none;
 			}
 			.hole.drag-over {
 				box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.7);
 				background: rgba(255, 255, 255, 0.35);
+			}
+			.hole.dragging {
+				box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.8);
+			}
+			.hole.dragging .peg {
+				transform: translateY(-6px) scale(1.05);
 			}
 			.hole.disabled {
 				opacity: 0;
@@ -276,6 +284,16 @@
 					inset 0 3px 6px rgba(255, 255, 255, 0.75),
 					inset 0 -2px 4px rgba(0, 0, 0, 0.2),
 					0 4px 10px rgba(0, 0, 0, 0.25);
+				transition: transform 0.2s ease;
+			}
+			.peg.ghost {
+				position: fixed;
+				z-index: 999;
+				pointer-events: none;
+				transform: translate(-50%, -50%);
+				box-shadow:
+					inset 0 4px 8px rgba(255, 255, 255, 0.9),
+					0 6px 12px rgba(0, 0, 0, 0.6);
 			}
 			body.theme-dark .hole {
 				background: radial-gradient(circle at 30% 30%, rgba(81, 91, 110, 0.95), rgba(24, 27, 40, 0.95) 60%);

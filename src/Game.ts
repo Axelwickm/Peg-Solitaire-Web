@@ -8,6 +8,8 @@ export class KongmingGame {
   private skipClickUntil = 0;
   private selected: string | null = null;
   private pegs = new Set<string>();
+  private draggingHole: HTMLElement | null = null;
+  private ghostPeg: HTMLDivElement | null = null;
   private validCells = new Set<string>();
   private boundDragMove: (event: PointerEvent) => void;
   private boundDragEnd: () => void;
@@ -141,6 +143,9 @@ export class KongmingGame {
     this.dragTargetKey = key;
     this.dragMoved = false;
     this.setDragHover(key);
+    this.draggingHole = this.getHoleElement(key);
+    this.draggingHole?.classList.add('dragging');
+    this.createGhostPeg(event);
     document.addEventListener('pointermove', this.boundDragMove);
     document.addEventListener('pointerup', this.boundDragEnd);
     event.preventDefault();
@@ -156,6 +161,7 @@ export class KongmingGame {
     } else {
       this.clearDragHover();
     }
+    this.updateGhostPosition(event);
   }
 
   private handleDragEnd(): void {
@@ -164,7 +170,10 @@ export class KongmingGame {
     }
     this.draggingPegKey = null;
     this.dragTargetKey = null;
+    this.draggingHole?.classList.remove('dragging');
+    this.draggingHole = null;
     this.clearDragHover();
+    this.removeGhostPeg();
     document.removeEventListener('pointermove', this.boundDragMove);
     document.removeEventListener('pointerup', this.boundDragEnd);
     if (this.dragMoved) {
@@ -214,6 +223,30 @@ export class KongmingGame {
       return target.dataset.pos;
     }
     return null;
+  }
+
+  private createGhostPeg(event: PointerEvent): void {
+    if (this.ghostPeg) {
+      this.removeGhostPeg();
+    }
+    const peg = document.createElement('div');
+    peg.className = 'peg ghost';
+    document.body.appendChild(peg);
+    this.ghostPeg = peg;
+    this.updateGhostPosition(event);
+  }
+
+  private updateGhostPosition(event: PointerEvent): void {
+    if (!this.ghostPeg) return;
+    const size = parseFloat(getComputedStyle(this.ghostPeg).width) || 40;
+    this.ghostPeg.style.left = `${event.clientX - size / 2}px`;
+    this.ghostPeg.style.top = `${event.clientY - size / 2}px`;
+  }
+
+  private removeGhostPeg(): void {
+    if (!this.ghostPeg) return;
+    this.ghostPeg.remove();
+    this.ghostPeg = null;
   }
 
   private updateWinState(): void {
