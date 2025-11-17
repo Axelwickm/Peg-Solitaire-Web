@@ -87,6 +87,9 @@
 				height: clamp(200px, 28vw, 260px);
 				padding-left: clamp(12px, 2vw, 20px);
 				min-width: 120px;
+				user-select: none;
+				-webkit-user-select: none;
+				-moz-user-select: none;
 			}
 			.menu-panel.right {
 				padding-right: clamp(12px, 2vw, 20px);
@@ -112,6 +115,7 @@
 				font-size: clamp(0.65rem, 1vw, 0.75rem);
 				font-weight: 600;
 				color: rgba(27, 27, 31, 0.6);
+				user-select: none;
 			}
 			.menu-panel.left .menu-items {
 				margin-left: 0;
@@ -137,12 +141,20 @@
 				text-align: inherit;
 				cursor: pointer;
 				-webkit-appearance: none;
+				user-select: none;
+				-webkit-user-select: none;
+				-moz-user-select: none;
+				-webkit-tap-highlight-color: transparent;
+				outline: none;
 			}
 			.menu-items button:hover,
 			.menu-item.active {
 				background: none;
 				border-radius: 3px;
 				color: #101010;
+			}
+			.menu-items button:focus-visible {
+				outline: none;
 			}
 			body.theme-dark .menu-items button {
 				color: #8c8f9c;
@@ -187,26 +199,25 @@
 				border-radius: 8px;
 				border: none;
 				box-shadow: none;
-				overflow: hidden;
+				overflow: visible;
 				--light-x: 0;
 				--light-y: -1;
 			}
-			.board-wrapper::before {
-				content: '';
+			.board-background {
 				position: absolute;
 				inset: 0;
 				border-radius: inherit;
 				background: url('board.webp') center/cover no-repeat;
-				background-size: cover;
-				transform: scale(1.15);
+				background-size: 105%;
+				transform: scale(1.05);
 				transform-origin: center;
 				z-index: 0;
 				pointer-events: none;
 				opacity: 1;
 				transition: opacity 0.3s ease;
 			}
-			body.theme-light .board-wrapper::before,
-			body.theme-dark .board-wrapper::before {
+			body.theme-light .board-background,
+			body.theme-dark .board-background {
 				opacity: 0;
 			}
 			body.theme-light .board-wrapper,
@@ -364,8 +375,8 @@
 			}
 			.peg {
 				position: relative;
-				width: 30px;
-				height: 30px;
+				width: 35px;
+				height: 35px;
 				aspect-ratio: 1 / 1;
 				border-radius: 50%;
 				background: url('ball.webp') center/contain no-repeat;
@@ -474,7 +485,9 @@
 				color: #ffffff;
 			}
 			.board-actions.hidden,
-			.bottom-controls.hidden,
+			.bottom-controls.hidden {
+				display: none;
+			}
 			.info-panel {
 				position: absolute;
 				inset: 8px;
@@ -536,6 +549,7 @@
 				<div class="menu-handle"></div>
 			</div>
 			<div class="board-wrapper">
+				<div class="board-background" aria-hidden="true"></div>
 				<div id="board"></div>
 				<svg class="solver-overlay" aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
 				<div class="win-overlay" aria-hidden="true"></div>

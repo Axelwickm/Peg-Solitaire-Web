@@ -41,6 +41,8 @@ export class IdaStarSession {
   private solved = false;
   private bestPath: SolverMove[] = [];
   private bestPegs = Infinity;
+  private adjacency = new Map<string, string[]>();
+  private distToTarget = new Map<string, number>();
   private initial: Set<string>;
   private target: string;
 
@@ -50,6 +52,8 @@ export class IdaStarSession {
     this.bound = this.heuristic(this.initial);
     this.nextBound = Infinity;
     this.resetStack();
+    this.buildAdjacency();
+    this.computeDistances();
   }
 
   public runChunk(maxMs: number): SolverSessionProgress {
@@ -156,6 +160,42 @@ export class IdaStarSession {
     }
   }
 
+  private buildAdjacency(): void {
+    this.adjacency.clear();
+    this.allowedMoves.forEach((destinations, from) => {
+      destinations.forEach((_jump, to) => {
+        this.addNeighbor(from, to);
+        this.addNeighbor(to, from);
+      });
+    });
+  }
+
+  private addNeighbor(source: string, target: string): void {
+    if (!this.adjacency.has(source)) {
+      this.adjacency.set(source, []);
+    }
+    if (!this.adjacency.get(source)!.includes(target)) {
+      this.adjacency.get(source)!.push(target);
+    }
+  }
+
+  private computeDistances(): void {
+    this.distToTarget.clear();
+    const queue: string[] = [this.target];
+    this.distToTarget.set(this.target, 0);
+    while (queue.length) {
+      const current = queue.shift()!;
+      const neighbors = this.adjacency.get(current) ?? [];
+      const dist = this.distToTarget.get(current)!;
+      neighbors.forEach(neighbor => {
+        if (!this.distToTarget.has(neighbor)) {
+          this.distToTarget.set(neighbor, dist + 1);
+          queue.push(neighbor);
+        }
+      });
+    }
+  }
+
   private generateMoves(pegs: Set<string>): SolverMove[] {
     const moves: SolverMove[] = [];
     for (const peg of pegs) {
@@ -171,7 +211,30 @@ export class IdaStarSession {
   }
 
   private heuristic(pegs: Set<string>): number {
-    return Math.max(0, pegs.size - 1);
+    const pegCount = pegs.size;
+    let maxDist = 0;
+    let totalDist = 0;
+    let reachable = true;
+
+    pegs.forEach(peg => {
+      const dist = this.distToTarget.get(peg);
+      if (dist === undefined) {
+        reachable = false;
+        return;
+      }
+      maxDist = Math.max(maxDist, dist);
+      totalDist += dist;
+    });
+
+    if (!reachable) {
+      // If any peg cannot reach the target, ensure this branch is deprioritized.
+      return pegCount + maxDist + 5;
+    }
+
+    const spanPenalty = Math.ceil(maxDist / 2);
+    const spreadPenalty = Math.ceil(totalDist / Math.max(1, pegCount * 2));
+
+    return Math.max(pegCount - 1, spanPenalty, spreadPenalty);
   }
 
   private serialize(pegs: Set<string>): string {
