@@ -17,6 +17,7 @@ export class MenuControl {
   private clickTargetIndex: number | null = null;
   private readonly moveHandler: (event: PointerEvent) => void;
   private readonly upHandler: () => void;
+  private lastHighlightIndex = -1;
 
   constructor(panel: Element) {
     this.panel = panel as HTMLElement;
@@ -78,6 +79,16 @@ export class MenuControl {
     this.items.forEach((item, index) => {
       item.classList.toggle('active', index === highlightIndex);
     });
+    if (this.lastHighlightIndex !== highlightIndex) {
+      this.lastHighlightIndex = highlightIndex;
+      const menuName = this.items[highlightIndex]?.dataset.menu;
+      const event = new CustomEvent('menu:activate', {
+        bubbles: true,
+        composed: true,
+        detail: { menu: menuName },
+      });
+      this.panel.dispatchEvent(event);
+    }
     this.activeIndex = highlightIndex;
     return nearestDist;
   }

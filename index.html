@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 	<head>
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<title>Kongming Chess</title>
 		<style>
 			:root {
@@ -17,8 +17,43 @@
 				align-items: center;
 				justify-content: center;
 				gap: 1rem;
-				background: linear-gradient(180deg, #fefefe, #e9edf0);
-				color: #1b1b1f;
+				background: linear-gradient(180deg, var(--page-bg-from), var(--page-bg-to));
+				color: var(--text-color);
+				transition: background-color 0.4s ease, color 0.4s ease, background 0.4s ease;
+			}
+			:root {
+				--page-bg-from: #fefefe;
+				--page-bg-to: #e9edf0;
+				--text-color: #1b1b1f;
+				--board-radial-from: rgba(163, 97, 22, 0.9);
+				--board-radial-to: rgba(90, 47, 22, 0.95);
+				--board-bg-color: #5a2f16;
+				--board-font-color: #1b1b1f;
+				--solved-border: #0b0b0b;
+				--solved-badge-bg: rgba(0, 0, 0, 0.85);
+				--solved-badge-color: #fff;
+			}
+			body.theme-light {
+				--page-bg-from: #ffffff;
+				--page-bg-to: #dfe2e7;
+				--text-color: #1b1b1f;
+				--board-radial-from: rgba(255, 255, 255, 0.9);
+				--board-radial-to: rgba(220, 223, 228, 0.95);
+				--board-bg-color: #f6f6f6;
+				--solved-border: rgba(85, 85, 85, 0.9);
+				--solved-badge-bg: rgba(40, 40, 40, 0.8);
+				--solved-badge-color: #ffffff;
+			}
+			body.theme-dark {
+				--page-bg-from: #07070b;
+				--page-bg-to: #1d1e25;
+				--text-color: #f7f7ff;
+				--board-radial-from: rgba(53, 93, 118, 0.95);
+				--board-radial-to: rgba(20, 26, 35, 0.95);
+				--board-bg-color: #1f222f;
+				--solved-border: rgba(255, 255, 255, 0.9);
+				--solved-badge-bg: rgba(0, 0, 0, 0.7);
+				--solved-badge-color: #fff;
 			}
 			h1 {
 				margin: 0;
@@ -95,6 +130,22 @@
 				cursor: pointer;
 				-webkit-appearance: none;
 			}
+			.menu-items button:hover,
+			.menu-item.active {
+				background: none;
+				border-radius: 3px;
+				color: #101010;
+			}
+			body.theme-dark .menu-items button {
+				color: #8c8f9c;
+			}
+			body.theme-dark .menu-items button:hover,
+			body.theme-dark .menu-item.active {
+				color: #ffffff;
+			}
+			body.theme-dark .menu-items button {
+				color: #fff;
+			}
 			.menu-item.active {
 				color: #101010;
 			}
@@ -123,50 +174,53 @@
 				cursor: grabbing;
 			}
 			.board-wrapper {
+				position: relative;
 				padding: 26px;
 				border-radius: 8px;
 				border: 1px solid rgba(0, 0, 0, 0.35);
 				--light-x: 0;
 				--light-y: -1;
 				background:
-					radial-gradient(circle at calc(50% + var(--light-x) * 25px) calc(45% - var(--light-y) * 15px), rgba(163, 97, 22, 0.9), rgba(90, 47, 22, 0.95) 65%),
-					url('board_texture_2.png');
+				radial-gradient(circle at calc(50% + var(--light-x) * 25px) calc(45% - var(--light-y) * 15px), var(--board-radial-from), var(--board-radial-to)),
+				url('board_texture_2.png');
 				background-size: cover;
 				background-blend-mode: overlay;
 				box-shadow:
-					0 14px 30px rgba(0, 0, 0, 0.3),
-					calc(var(--light-x) * 34px) calc(var(--light-y) * 28px) 45px rgba(255, 255, 255, 0.45),
-					calc(var(--light-x) * -22px) calc(var(--light-y) * -18px) 38px rgba(8, 5, 2, 0.45);
+				0 14px 30px rgba(0, 0, 0, 0.3),
+				calc(var(--light-x) * 34px) calc(var(--light-y) * 28px) 45px rgba(255, 255, 255, 0.45),
+				calc(var(--light-x) * -22px) calc(var(--light-y) * -18px) 38px rgba(8, 5, 2, 0.45);
+			}
+			body.theme-dark .board-wrapper {
+				box-shadow: 0 0 35px rgba(0, 0, 0, 0.9),
+				calc(var(--light-x) * 34px) calc(var(--light-y)) 45px rgba(255, 255, 255, 0.45),
+				calc(var(--light-x) * -22px) calc(var(--light-y) * -18px) 38px rgba(8, 5, 2, 0.45);
 			}
 			.board-wrapper .win-overlay {
 				position: absolute;
-				top: 0;
-				left: 0;
-				right: 0;
-				bottom: 0;
-				border: 2px solid #0b0b0b;
-				border-radius: 12px;
+				inset: -6px;
+				border: 4px solid var(--solved-border);
+				border-radius: 14px;
+				z-index: 2;
 				pointer-events: none;
-				transform: translateX(-115%);
 				opacity: 0;
-				transition: transform 0.5s ease, opacity 0.3s ease;
+				transition: opacity 0.3s ease;
+				box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
 			}
-			.board-wrapper .win-overlay span {
+			.board-wrapper .win-overlay::after {
+				content: 'Solved';
 				position: absolute;
-				right: 0.6rem;
-				top: 0.4rem;
+				right: 0.8rem;
+				top: -0.75rem;
 				padding: 0.2rem 0.6rem;
-				background: rgba(0, 0, 0, 0.75);
-				color: #fff;
+				background: var(--solved-badge-bg);
+				color: var(--solved-badge-color);
 				font-size: 0.6rem;
 				font-weight: 600;
 				letter-spacing: 0.4em;
 				border-radius: 2px;
 			}
 			.board-wrapper.solved .win-overlay {
-				transform: translateX(0);
 				opacity: 1;
-				animation: slide-glow 1.2s ease infinite alternate;
 			}
 			@keyframes slide-glow {
 				from {
@@ -182,7 +236,7 @@
 				grid-template-rows: repeat(7, 60px);
 				gap: 6px;
 				padding: 12px;
-				background-color: #5a2f16;
+				background-color: var(--board-bg-color);
 				background-image: url('board_texture.png');
 				background-size: cover;
 				background-position: center;
@@ -193,12 +247,13 @@
 				width: 60px;
 				height: 60px;
 				border-radius: 50%;
-				background: rgba(255, 255, 255, 0.2);
+				background: radial-gradient(circle, rgba(255, 255, 255, 0.6), rgba(220, 205, 170, 0.6) 55%, rgba(180, 145, 100, 0.4));
 				display: flex;
 				align-items: center;
 				justify-content: center;
 				transition: transform 0.2s ease, background 0.2s ease;
 				cursor: pointer;
+				box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
 			}
 			.hole.drag-over {
 				box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.7);
@@ -216,8 +271,36 @@
 				width: 40px;
 				height: 40px;
 				border-radius: 50%;
-				background: radial-gradient(circle at 30% 30%, #ffffff, #d5dae1 60%, #b1b7c0);
-				box-shadow: inset 0 4px 6px rgba(255, 255, 255, 0.7), inset 0 -4px 6px rgba(115, 115, 130, 0.4), 0 5px 12px rgba(0, 0, 0, 0.3);
+				background: linear-gradient(145deg, #f0f0f0, #d9d4ce);
+				box-shadow:
+					inset 0 3px 6px rgba(255, 255, 255, 0.75),
+					inset 0 -2px 4px rgba(0, 0, 0, 0.2),
+					0 4px 10px rgba(0, 0, 0, 0.25);
+			}
+			body.theme-dark .hole {
+				background: radial-gradient(circle at 30% 30%, rgba(81, 91, 110, 0.95), rgba(24, 27, 40, 0.95) 60%);
+				border: 1px solid rgba(255, 255, 255, 0.08);
+				box-shadow: inset 0 4px 15px rgba(0, 0, 0, 0.65),
+					0 4px 8px rgba(0, 0, 0, 0.45);
+			}
+			body.theme-dark .peg {
+				background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.9), rgba(200, 210, 220, 0.4));
+				box-shadow:
+					inset 0 3px 6px rgba(255, 255, 255, 0.6),
+					inset 0 -2px 4px rgba(15, 18, 25, 0.6),
+					0 4px 8px rgba(0, 0, 0, 0.5);
+				border: 1px solid rgba(255, 255, 255, 0.25);
+			}
+			body.theme-light .hole {
+				background: radial-gradient(circle, rgba(255, 255, 255, 1), rgba(240, 240, 240, 0.8) 65%, rgba(200, 170, 120, 0.35));
+				box-shadow: inset 0 4px 8px rgba(0, 0, 0, 0.2);
+			}
+			body.theme-light .peg {
+				background: linear-gradient(145deg, #ffffff, #f0f4fb 65%, #e9eff9);
+				box-shadow:
+					inset 0 4px 8px rgba(255, 255, 255, 0.85),
+					inset 0 -3px 5px rgba(0, 0, 0, 0.3),
+					0 4px 10px rgba(0, 0, 0, 0.35);
 			}
 			#status {
 				min-height: 1.5rem;
@@ -246,6 +329,65 @@
 			.bottom-controls button:hover {
 				color: #101010;
 			}
+			body.theme-dark .bottom-controls button:hover {
+				color: #ffffff;
+			}
+			body.theme-light .board-wrapper,
+			body.theme-dark .board-wrapper {
+				background:
+				radial-gradient(circle at calc(50% + var(--light-x) * 25px) calc(45% - var(--light-y) * 15px), var(--board-radial-from), var(--board-radial-to));
+				background-blend-mode: normal;
+			}
+			body.theme-light #board {
+				background-image: none;
+				box-shadow: inset 0 4px 16px rgba(0, 0, 0, 0.18), 0 12px 18px rgba(0, 0, 0, 0.25);
+			}
+			body.theme-dark #board {
+				background-image: none;
+				box-shadow: inset 0 4px 16px rgba(0, 0, 0, 0.4), 0 12px 18px rgba(0, 0, 0, 0.45);
+			}
+			.info-panel {
+				position: absolute;
+				inset: 8px;
+				z-index: 3;
+				background: rgba(255, 255, 255, 0.95);
+				border-radius: 10px;
+				padding: 1rem 1.25rem;
+				box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
+				opacity: 0;
+				transform: scale(0.95);
+				transition: opacity 0.3s ease, transform 0.3s ease;
+				pointer-events: none;
+				font-size: 0.78rem;
+				line-height: 1.5;
+				color: #1e1e1e;
+				overflow: auto;
+			}
+			body.theme-dark .info-panel {
+				background: rgba(22, 26, 34, 0.95);
+				color: #fff;
+				box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85);
+			}
+			.info-panel.visible {
+				opacity: 1;
+				transform: scale(1);
+				pointer-events: auto;
+			}
+			.info-panel .info-links {
+				display: flex;
+				flex-direction: column;
+				gap: 0.4rem;
+				margin-top: 0.6rem;
+			}
+			.info-panel .info-links a {
+				font-size: 0.7rem;
+				color: #1b6fb3;
+				text-decoration: none;
+				letter-spacing: 0.2em;
+			}
+			body.theme-dark .info-panel .info-links a {
+				color: #85b9ff;
+			}
 		</style>
 	</head>
 	<body>
@@ -261,16 +403,34 @@
 				</div>
 				<div class="menu-handle"></div>
 			</div>
-			<div class="board-wrapper">
-				<div id="board"></div>
-				<div class="win-overlay" aria-hidden="true"><span>Solved</span></div>
+		<div class="board-wrapper">
+			<div id="board"></div>
+			<div class="win-overlay" aria-hidden="true"></div>
+			<div id="info-panel" class="info-panel" aria-live="polite">
+				<p>
+					Peg Solitaire, also called Solo Noble or Marble Solitaire, is a one-player board puzzle where you jump pegs over adjacent
+					pegs into empty holes, removing the jumped peg. The goal is to eliminate every piece but one, ideally returning to the center.
+				</p>
+				<p>
+					The earliest record comes from the court of Louis XIV—1697—when Mercure galant published rules and sample challenges.
+					This French court version cemented the cross-shaped board we still play today.
+				</p>
+				<p>
+					Play begins with every hole filled except the center. A move consists of jumping one peg over a neighbor along a straight
+					line into an empty hole, then removing the jumped peg. Repeat until only the center peg remains.
+				</p>
+				<div class="info-links">
+					<a href="https://en.wikipedia.org/wiki/Peg_solitaire" target="_blank" rel="noreferrer">Read more on Wikipedia</a>
+					<a href="https://github.com/Axelwickm/Kongming-Chess-Web" target="_blank" rel="noreferrer">View this build on GitHub</a>
+				</div>
 			</div>
+		</div>
 			<div class="menu-panel right">
 				<div class="menu-line"></div>
 				<div class="menu-items">
-        <button class="menu-item" type="button" data-menu="play">Play</button>
-        <button class="menu-item" type="button" data-menu="judge">Judge</button>
-        <button class="menu-item" type="button" data-menu="auto">Auto</button>
+					<button class="menu-item" type="button" data-menu="play">Play</button>
+					<button class="menu-item" type="button" data-menu="judge">Judge</button>
+					<button class="menu-item" type="button" data-menu="auto">Auto</button>
 				</div>
 				<div class="menu-handle"></div>
 			</div>
