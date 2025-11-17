@@ -17,6 +17,10 @@ const startShapeIndex = shapes.findIndex(shape => shape.id === storedShapeId);
 let currentShapeIndex = startShapeIndex >= 0 ? startShapeIndex : 0;
 localStorage.setItem('kongming-shape', shapes[currentShapeIndex].id);
 const game = new KongmingGame(boardEl, statusEl, boardWrapper as HTMLElement, shapes[currentShapeIndex]);
+const solverOverlay = document.querySelector<SVGSVGElement>('.solver-overlay');
+if (solverOverlay) {
+  game.setSolverOverlay(solverOverlay);
+}
 
 const params = new URLSearchParams(window.location.search);
 if (params.get('debugSolved') === '1') {
@@ -26,6 +30,7 @@ if (params.get('debugSolved') === '1') {
 const resetButton = document.getElementById('reset');
 resetButton?.addEventListener('click', () => {
   game.setup();
+  resetAutoSolveState();
 });
 
 const undoButton = document.getElementById('undo');
@@ -35,6 +40,8 @@ undoButton?.addEventListener('click', () => {
 
 const boardActions = document.getElementById('board-actions');
 const helperActions = document.getElementById('helper-actions');
+const autoActions = document.getElementById('auto-actions');
+const autoSolveButton = document.getElementById('auto-solve') as HTMLButtonElement | null;
 const infoPanel = document.getElementById('info-panel');
 type MenuActivateEvent = CustomEvent<{ menu?: string }>;
 document.addEventListener('menu:activate', (event: Event) => {
@@ -46,11 +53,19 @@ document.addEventListener('menu:activate', (event: Event) => {
   }
   updateActionVisibility(menu);
 });
+document.addEventListener('solver:cleared', () => {
+  resetAutoSolveState();
+});
 updateActionVisibility('play');
 function updateActionVisibility(menu?: string): void {
   const showBoard = menu === 'play' || !menu;
   boardActions?.classList.toggle('hidden', !showBoard);
   helperActions?.classList.toggle('hidden', menu !== 'helper');
+  autoActions?.classList.toggle('hidden', menu !== 'auto');
+  if (menu !== 'auto') {
+    game.clearSolverVisualization();
+    resetAutoSolveState();
+  }
 }
 
 const themes: Array<{ name: string; label: string; className: string }> = [
@@ -83,6 +98,7 @@ const storedTheme = localStorage.getItem('kongming-theme');
 const startIndex = themes.findIndex(t => t.name === storedTheme);
 applyTheme(startIndex >= 0 ? startIndex : 0);
 
+const autoPlayButton = document.getElementById('auto-play') as HTMLButtonElement | null;
 const hintButton = document.getElementById('hint');
 hintButton?.addEventListener('click', () => {
   game.requestHint();
@@ -99,6 +115,65 @@ helperButton?.addEventListener('click', () => {
 });
 updateHelperText();
 
+function resetAutoSolveState(): void {
+  if (!autoSolveButton) return;
+  autoSolveButton.textContent = 'Solve';
+  autoSolveButton.title = '';
+  autoSolveButton.disabled = false;
+  if (autoPlayButton) {
+    autoPlayButton.disabled = !game.hasSolvePlan();
+  }
+}
+resetAutoSolveState();
+if (autoPlayButton) {
+  autoPlayButton.setAttribute('title', 'Coming soon');
+}
+
+autoSolveButton?.addEventListener('click', () => {
+  if (!autoSolveButton) return;
+  if (game.isSolverActive()) {
+    game.clearSolverVisualization();
+    return;
+  }
+  autoSolveButton.textContent = 'Cancel';
+  autoSolveButton.title = 'Click to abort the solve';
+  autoSolveButton.textContent = 'Solving…';
+  game.startAutoSolveVisualization().then(result => {
+    if (result.solved) {
+      autoSolveButton.textContent = 'Solved';
+      autoSolveButton.title = `Time ${result.durationMs.toFixed(1)}ms · Nodes ${result.nodesExplored}`;
+    } else {
+      autoSolveButton.textContent = 'Solve';
+      autoSolveButton.title = `No solution · ${result.nodesExplored} nodes · ${result.durationMs.toFixed(1)}ms`;
+    }
+    if (autoPlayButton) {
+      autoPlayButton.disabled = !game.hasSolvePlan();
+    }
+  });
+});
+document.addEventListener('solver:cleared', () => {
+  resetAutoSolveState();
+});
+document.addEventListener('autoplay:started', () => {
+  if (autoPlayButton) {
+    autoPlayButton.textContent = 'Playing...';
+  }
+});
+document.addEventListener('autoplay:stopped', () => {
+  if (autoPlayButton) {
+    autoPlayButton.textContent = 'Play';
+  }
+});
+autoPlayButton?.addEventListener('click', () => {
+  if (!autoPlayButton) return;
+  if (!game.hasSolvePlan()) return;
+  if (game.isAutoplayActive()) {
+    game.stopAutoPlay();
+    return;
+  }
+  game.startAutoPlayPlan();
+});
+
 const boardMenuButton = document.querySelector<HTMLButtonElement>('.menu-panel.left .menu-item[data-menu="board"]');
 const shapeButton = document.getElementById('shape');
 
@@ -112,6 +187,7 @@ function cycleShape(): void {
   currentShapeIndex = nextIndex;
   game.changeShape(nextShape);
   localStorage.setItem('kongming-shape', shapes[currentShapeIndex].id);
+  resetAutoSolveState();
 }
 
 boardMenuButton?.addEventListener('click', cycleShape);

@@ -259,6 +259,24 @@
 				box-shadow: inset 0 5px 18px rgba(255, 255, 255, 0.35), inset 0 -5px 20px rgba(0, 0, 0, 0.4), 0 6px 15px rgba(0, 0, 0, 0.25);
 				overflow: hidden;
 			}
+			.board-wrapper.solver-busy #board {
+				pointer-events: none;
+				cursor: progress;
+			}
+			.solver-overlay {
+				position: absolute;
+				inset: 26px;
+				width: calc(100% - 52px);
+				height: calc(100% - 52px);
+				pointer-events: none;
+				z-index: 1;
+				font-family: 'System', sans-serif;
+				font-weight: 700;
+				text-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+			}
+			.solver-overlay line {
+				vector-effect: non-scaling-stroke;
+			}
 			.hole {
 				position: absolute;
 				width: var(--hole-size, clamp(40px, 5vw, 60px));
@@ -286,6 +304,10 @@
 			}
 			.hole.drag-over {
 				background: rgba(255, 255, 255, 0.35);
+			}
+			.hole.helper-hint-from,
+			.hole.helper-hint-to {
+				box-shadow: 0 0 0 4px rgba(255, 255, 0, 0.6);
 			}
 			.hole.drag-over::after {
 				content: '';
@@ -359,7 +381,8 @@
 				min-height: 1.5rem;
 			}
 			.board-actions,
-			.bottom-controls {
+			.bottom-controls,
+			.auto-actions {
 				display: flex;
 				gap: 1.5rem;
 				align-items: center;
@@ -370,7 +393,8 @@
 				max-width: 640px;
 			}
 			.board-actions button,
-			.bottom-controls button {
+			.bottom-controls button,
+			.auto-actions button {
 				padding: 0.6rem 1.4rem;
 				background: transparent;
 				border: 0;
@@ -382,15 +406,18 @@
 				cursor: pointer;
 			}
 			.board-actions button:hover,
-			.bottom-controls button:hover {
+			.bottom-controls button:hover,
+			.auto-actions button:hover {
 				color: #101010;
 			}
 			body.theme-dark .board-actions button:hover,
-			body.theme-dark .bottom-controls button:hover {
+			body.theme-dark .bottom-controls button:hover,
+			body.theme-dark .auto-actions button:hover {
 				color: #ffffff;
 			}
 			.board-actions.hidden,
-			.bottom-controls.hidden {
+			.bottom-controls.hidden,
+			.auto-actions.hidden {
 				display: none;
 			}
 			body.theme-light .board-wrapper,
@@ -466,6 +493,7 @@
 			</div>
 		<div class="board-wrapper">
 			<div id="board"></div>
+			<svg class="solver-overlay" aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
 			<div class="win-overlay" aria-hidden="true"></div>
 				<div id="info-panel" class="info-panel" aria-live="polite">
 					<p>
@@ -507,6 +535,10 @@
 			<button id="undo" type="button">Undo</button>
 			<button id="hint" type="button">Hint best move</button>
 			<button id="helper-toggle" type="button">Helper (off)</button>
+		</div>
+		<div class="auto-actions hidden" id="auto-actions">
+			<button id="auto-solve" type="button">Solve</button>
+			<button id="auto-play" type="button">Play</button>
 		</div>
 		<script type="module" src="./dist/main.js"></script>
 	</body>

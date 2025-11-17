@@ -1,4 +1,11 @@
 import { BoardShape } from './shapes';
+import {
+  IdaStarSolver,
+  SolverResult,
+  SolverMove,
+  IdaStarSession,
+  SolverSessionProgress,
+} from './solver/IdaStarSolver';
 
 export class KongmingGame {
   private boardEl: HTMLElement;
@@ -25,7 +32,27 @@ export class KongmingGame {
   private pickupPulseTimeout: number | null = null;
   private history: string[][] = [];
   private helperMode = false;
-
+  private helperBestMove: SolverMove | null = null;
+  private helperResult: SolverResult | null = null;
+  private helperStateDirty = true;
+  private holePositions = new Map<string, { x: number; y: number }>();
+  private solverOverlay: SVGSVGElement | null = null;
+  private solverLines: SVGLineElement[] = [];
+  private solverCircles: SVGCircleElement[] = [];
+  private solverTexts: SVGTextElement[] = [];
+  private solverSession: IdaStarSession | null = null;
+  private solverRunning = false;
+  private solverTimer: number | null = null;
+  private solverStartTime = 0;
+  private solverResult: SolverResult | null = null;
+  private solverPromiseResolve: ((result: SolverResult) => void) | null = null;
+  private solverLastProgress: SolverSessionProgress | null = null;
+  private autoplayActive = false;
+  private autoplayMoves: SolverMove[] = [];
+  private autoplayIndex = 0;
+  private autoplayTimer: number | null = null;
+  private autoplayPlanVersion = 0;
+  private autoplayKnownPlanVersion = 0;
   constructor(
     boardEl: HTMLElement,
     statusEl: HTMLElement,
@@ -43,6 +70,7 @@ export class KongmingGame {
 
   public setup(): void {
     this.boardEl.innerHTML = '';
+    this.clearSolverVisualization();
     this.pegs.clear();
     this.moveMade = false;
     this.validCells.forEach(cell => {
@@ -52,8 +80,9 @@ export class KongmingGame {
     });
     this.history = [this.snapshotPegs()];
     this.selected = null;
+    this.helperStateDirty = true;
     this.render();
-    this.setStatus('Remove pegs until one remains in center.');
+    this.setStatus(`Remove pegs until one remains at the ${this.currentShape.finalTargetDescription}.`);
   }
 
   public hasProgress(): boolean {
@@ -76,7 +105,14 @@ export class KongmingGame {
 
   private render(): void {
     this.clearPickupPulse();
+    if (this.helperMode) {
+      this.refreshHelperState();
+    } else {
+      this.helperBestMove = null;
+      this.helperResult = null;
+    }
     this.boardEl.innerHTML = '';
+    this.holePositions.clear();
     const holeSize = this.calculateHoleSize();
     this.boardEl.style.setProperty('--hole-size', `${holeSize}px`);
     this.updatePickablePegs();
@@ -90,6 +126,7 @@ export class KongmingGame {
           hole.classList.add('selected');
         }
         const position = this.getHolePosition(r, c);
+        this.holePositions.set(key, position);
         hole.style.left = `${position.x * 100}%`;
         hole.style.top = `${position.y * 100}%`;
         hole.dataset.pos = key;
@@ -98,6 +135,13 @@ export class KongmingGame {
           peg.className = 'peg';
           hole.appendChild(peg);
         }
+        if (this.helperMode && this.helperBestMove) {
+          if (key === this.helperBestMove.from) {
+            hole.classList.add('helper-hint-from');
+          } else if (key === this.helperBestMove.to) {
+            hole.classList.add('helper-hint-to');
+          }
+        }
         hole.addEventListener('pointerdown', event => this.startPegDrag(event, key));
         hole.addEventListener('click', event => this.handleHoleClick(key, event));
         this.boardEl.appendChild(hole);
@@ -105,8 +149,11 @@ export class KongmingGame {
     }
     this.updateWinState();
     if (this.pegs.size === 1) {
+      const desc = this.currentShape.finalTargetDescription;
       this.setStatus(
-        this.pegs.has(this.currentShape.empty) ? 'Perfect! Final peg in the center.' : 'Great! Only one peg left.',
+        this.pegs.has(this.currentShape.empty)
+          ? `Perfect! Final peg at the ${desc}.`
+          : 'Great! Only one peg left.',
       );
     } else if ([...this.validMoves()].length === 0) {
       this.setStatus('No moves left. Reset to try again.');
@@ -193,6 +240,7 @@ export class KongmingGame {
 
   private startPegDrag(event: PointerEvent, key: string): void {
     if (!this.pegs.has(key)) return;
+    this.stopAutoPlay();
     if (!this.pickablePegs.has(key)) {
       this.pulsePickableHints();
       return;
@@ -251,12 +299,16 @@ export class KongmingGame {
   }
 
   private applyMove(from: string, to: string, jump: string): void {
+    if (!this.autoplayActive) {
+      this.clearSolverVisualization();
+    }
     this.pegs.delete(from);
     this.pegs.delete(jump);
     this.pegs.add(to);
     this.selected = null;
     this.moveMade = true;
     this.pushHistoryState();
+    this.helperStateDirty = true;
     this.render();
   }
 
@@ -396,6 +448,11 @@ export class KongmingGame {
     return [...this.pegs];
   }
 
+  public solvePuzzle(): SolverResult {
+    const solver = new IdaStarSolver(this.allowedMoves);
+    return solver.solve(new Set(this.pegs), this.currentShape.empty);
+  }
+
   private pushHistoryState(): void {
     this.history.push(this.snapshotPegs());
   }
@@ -407,6 +464,7 @@ export class KongmingGame {
     this.pegs = new Set(previous);
     this.selected = null;
     this.moveMade = this.history.length > 1;
+    this.helperStateDirty = true;
     this.render();
   }
 
@@ -417,10 +475,243 @@ export class KongmingGame {
   public toggleHelperMode(): void {
     this.helperMode = !this.helperMode;
     this.setStatus(this.helperMode ? 'Helper mode on' : 'Helper mode off');
+    this.helperStateDirty = true;
   }
 
   public isHelperModeActive(): boolean {
     return this.helperMode;
+  }
+
+  public isAutoplayActive(): boolean {
+    return this.autoplayActive;
+  }
+
+  public isSolverActive(): boolean {
+    return this.solverRunning;
+  }
+
+  public setSolverOverlay(overlay: SVGSVGElement): void {
+    this.solverOverlay = overlay;
+  }
+
+  public async startAutoSolveVisualization(chunkMs = 50): Promise<SolverResult> {
+    if (this.solverRunning && this.solverResult) {
+      return this.solverResult;
+    }
+    this.clearSolverVisualization();
+    this.solverSession = new IdaStarSolver(this.allowedMoves).createSession(
+      new Set(this.pegs),
+      this.currentShape.empty,
+    );
+    this.solverRunning = true;
+    this.solverStartTime = performance.now();
+    this.boardWrapper.classList.add('solver-busy');
+    const promise = new Promise<SolverResult>(resolve => {
+      this.solverPromiseResolve = resolve;
+      const step = (): void => {
+        if (!this.solverSession) return;
+        const progress = this.solverSession.runChunk(chunkMs);
+        this.solverLastProgress = progress;
+        const color = progress.done && progress.solved ? 'lime' : 'red';
+        this.updateSolverLines(progress.currentPath, color);
+        if (progress.done) {
+          this.solverRunning = false;
+          this.boardWrapper.classList.remove('solver-busy');
+          const result: SolverResult = {
+            solved: progress.solved,
+            moves: progress.bestMoves,
+            bestMoves: progress.bestMoves,
+            nodesExplored: progress.nodesExplored,
+            durationMs: Math.max(0, performance.now() - this.solverStartTime),
+          };
+          this.solverResult = result;
+          if (result.bestMoves.length > 0) {
+            this.autoplayPlanVersion += 1;
+            this.autoplayKnownPlanVersion = this.autoplayPlanVersion;
+            this.autoplayMoves = [...result.bestMoves];
+            this.autoplayIndex = 0;
+          }
+          if (result.solved) {
+            this.autoplayPlanVersion += 1;
+            this.autoplayKnownPlanVersion = this.autoplayPlanVersion;
+            this.autoplayMoves = [...result.moves];
+            this.autoplayIndex = 0;
+          }
+          this.solverSession = null;
+          if (this.solverTimer !== null) {
+            window.clearTimeout(this.solverTimer);
+            this.solverTimer = null;
+          }
+          this.solverPromiseResolve = null;
+          this.updateSolverLines(progress.bestMoves, progress.solved ? 'lime' : 'red');
+          resolve(result);
+          return;
+        }
+        this.solverTimer = window.setTimeout(step, 0);
+      };
+      step();
+    });
+    return promise;
+  }
+
+  public clearSolverVisualization(): void {
+    this.solverRunning = false;
+    this.solverSession = null;
+    if (this.solverTimer !== null) {
+      window.clearTimeout(this.solverTimer);
+      this.solverTimer = null;
+    }
+    this.boardWrapper.classList.remove('solver-busy');
+    this.clearSolverLines();
+    this.solverResult = null;
+    this.autoplayPlanVersion += 1;
+    this.autoplayMoves = [];
+    this.autoplayIndex = 0;
+    this.autoplayKnownPlanVersion = this.autoplayPlanVersion;
+    if (this.solverPromiseResolve) {
+      const nodes = this.solverLastProgress?.nodesExplored ?? 0;
+      const duration = Math.max(0, performance.now() - this.solverStartTime);
+      this.solverPromiseResolve({
+        solved: false,
+        moves: [],
+        bestMoves: [],
+        nodesExplored: nodes,
+        durationMs: duration,
+      });
+      this.solverPromiseResolve = null;
+    }
+    this.solverLastProgress = null;
+    const event = new CustomEvent('solver:cleared');
+    document.dispatchEvent(event);
+    this.stopAutoPlayInternal();
+  }
+
+  public hasSolvePlan(): boolean {
+    return !!(this.solverResult?.bestMoves.length);
+  }
+
+  private stopAutoPlayInternal(): void {
+    if (!this.autoplayActive) return;
+    if (this.autoplayTimer !== null) {
+      window.clearTimeout(this.autoplayTimer);
+      this.autoplayTimer = null;
+    }
+    this.autoplayActive = false;
+    document.dispatchEvent(new CustomEvent('autoplay:stopped'));
+  }
+
+  public stopAutoPlay(): void {
+    this.stopAutoPlayInternal();
+  }
+
+  public startAutoPlayPlan(delayMs = 850): void {
+    if (!this.hasSolvePlan()) return;
+    if (this.autoplayKnownPlanVersion !== this.autoplayPlanVersion) {
+      this.autoplayMoves = [...(this.solverResult?.moves ?? [])];
+      this.autoplayIndex = 0;
+      this.autoplayKnownPlanVersion = this.autoplayPlanVersion;
+    }
+    if (!this.autoplayMoves.length) return;
+    this.autoplayActive = true;
+    this.dropSolverOverlay();
+    document.dispatchEvent(new CustomEvent('autoplay:started'));
+    this.scheduleAutoMove(delayMs);
+  }
+
+  private scheduleAutoMove(delayMs: number): void {
+    if (!this.autoplayActive) return;
+    if (this.autoplayIndex >= this.autoplayMoves.length) {
+      this.stopAutoPlayInternal();
+      return;
+    }
+    this.autoplayTimer = window.setTimeout(() => {
+      if (!this.autoplayActive) return;
+      const move = this.autoplayMoves[this.autoplayIndex++];
+      this.applyMove(move.from, move.to, move.jump);
+      this.scheduleAutoMove(delayMs);
+    }, delayMs);
+  }
+
+  private updateSolverLines(moves: SolverMove[], color: string): void {
+    this.clearSolverLines();
+    const overlay = this.solverOverlay;
+    if (!overlay) return;
+    const total = moves.length;
+    moves.forEach((move, index) => {
+      const from = this.holePositions.get(move.from);
+      const to = this.holePositions.get(move.to);
+      if (!from || !to) return;
+      const ratio = total > 1 ? index / (total - 1) : 0;
+      const baseHue = Math.round(120 * ratio);
+      const strokeColor = `hsl(${baseHue}, 85%, ${color === 'lime' ? 65 : 48}%)`;
+
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('stroke', strokeColor);
+      line.setAttribute('stroke-width', '2');
+      line.setAttribute('stroke-linecap', 'round');
+      line.setAttribute('data-step', (index + 1).toString());
+      line.setAttribute('data-move', `${move.from}->${move.to}`);
+      line.setAttribute('x1', (from.x * 100).toString());
+      line.setAttribute('y1', (from.y * 100).toString());
+      line.setAttribute('x2', (to.x * 100).toString());
+      line.setAttribute('y2', (to.y * 100).toString());
+      overlay.appendChild(line);
+      this.solverLines.push(line);
+
+      const fromCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      fromCircle.setAttribute('cx', (from.x * 100).toString());
+      fromCircle.setAttribute('cy', (from.y * 100).toString());
+      fromCircle.setAttribute('r', '1.2');
+      fromCircle.setAttribute('fill', strokeColor);
+      fromCircle.setAttribute('stroke', '#0003');
+      fromCircle.setAttribute('stroke-width', '0.2');
+      fromCircle.setAttribute('data-node', move.from);
+      overlay.appendChild(fromCircle);
+      this.solverCircles.push(fromCircle);
+
+      const toCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      toCircle.setAttribute('cx', (to.x * 100).toString());
+      toCircle.setAttribute('cy', (to.y * 100).toString());
+      toCircle.setAttribute('r', '1.5');
+      toCircle.setAttribute('fill', color === 'lime' ? '#d4ffd4' : strokeColor);
+      toCircle.setAttribute('stroke', '#000a');
+      toCircle.setAttribute('stroke-width', '0.3');
+      overlay.appendChild(toCircle);
+      this.solverCircles.push(toCircle);
+
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', ((from.x + to.x) * 50).toString());
+      label.setAttribute('y', ((from.y + to.y) * 50).toString());
+      label.setAttribute('fill', '#fff');
+      label.setAttribute('font-size', '3');
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('dominant-baseline', 'central');
+      label.setAttribute('pointer-events', 'none');
+      label.textContent = `${index + 1}`;
+      overlay.appendChild(label);
+      this.solverTexts.push(label);
+    });
+  }
+
+  private clearSolverLines(): void {
+    this.solverLines.forEach(line => line.remove());
+    this.solverCircles.forEach(circle => circle.remove());
+    this.solverTexts.forEach(text => text.remove());
+    this.solverLines = [];
+    this.solverCircles = [];
+    this.solverTexts = [];
+  }
+
+  private dropSolverOverlay(): void {
+    this.clearSolverLines();
+    this.boardWrapper.classList.remove('solver-busy');
+  }
+
+  private refreshHelperState(): void {
+    if (!this.helperStateDirty && this.helperResult) return;
+    this.helperResult = this.solvePuzzle();
+    this.helperBestMove = this.helperResult.moves[0] ?? null;
+    this.helperStateDirty = false;
   }
 
 }
