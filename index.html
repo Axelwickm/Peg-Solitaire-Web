@@ -358,16 +358,18 @@
 			#status {
 				min-height: 1.5rem;
 			}
+			.board-actions,
 			.bottom-controls {
 				display: flex;
 				gap: 1.5rem;
 				align-items: center;
 				justify-content: center;
-				padding: 1.25rem 0 1.5rem;
-				margin: 1rem auto;
+				padding: 0.9rem 0;
+				margin: 0.5rem auto;
 				width: 100%;
-				max-width: 600px;
+				max-width: 640px;
 			}
+			.board-actions button,
 			.bottom-controls button {
 				padding: 0.6rem 1.4rem;
 				background: transparent;
@@ -379,11 +381,17 @@
 				font-size: 0.75rem;
 				cursor: pointer;
 			}
+			.board-actions button:hover,
 			.bottom-controls button:hover {
 				color: #101010;
 			}
+			body.theme-dark .board-actions button:hover,
 			body.theme-dark .bottom-controls button:hover {
 				color: #ffffff;
+			}
+			.board-actions.hidden,
+			.bottom-controls.hidden {
+				display: none;
 			}
 			body.theme-light .board-wrapper,
 			body.theme-dark .board-wrapper {
@@ -456,9 +464,9 @@
 				</div>
 				<div class="menu-handle"></div>
 			</div>
-			<div class="board-wrapper">
-				<div id="board"></div>
-				<div class="win-overlay" aria-hidden="true"></div>
+		<div class="board-wrapper">
+			<div id="board"></div>
+			<div class="win-overlay" aria-hidden="true"></div>
 				<div id="info-panel" class="info-panel" aria-live="polite">
 					<p>
 						Kongming Chess (also known as Peg Solitaire, Solo Noble, Solo Goli, Marble Solitaire, or simply Solitaire)
@@ -484,16 +492,21 @@
 				<div class="menu-line"></div>
 				<div class="menu-items">
 					<button class="menu-item" type="button" data-menu="play">Play</button>
-					<button class="menu-item" type="button" data-menu="judge">Judge</button>
+					<button class="menu-item" type="button" data-menu="helper">Helper</button>
 					<button class="menu-item" type="button" data-menu="auto">Auto</button>
 				</div>
 				<div class="menu-handle"></div>
 			</div>
 		</div>
-		<div class="bottom-controls">
+		<div class="board-actions" id="board-actions">
 			<button id="reset" type="button">Reset Board</button>
 			<button id="shape" type="button">Shape</button>
 			<button id="theme" type="button">Theme</button>
+		</div>
+		<div class="bottom-controls hidden" id="helper-actions">
+			<button id="undo" type="button">Undo</button>
+			<button id="hint" type="button">Hint best move</button>
+			<button id="helper-toggle" type="button">Helper (off)</button>
 		</div>
 		<script type="module" src="./dist/main.js"></script>
 	</body>

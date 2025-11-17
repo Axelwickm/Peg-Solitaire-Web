@@ -23,6 +23,8 @@ export class KongmingGame {
   private rowHoleCount = new Map<number, number>();
   private pickablePegs = new Set<string>();
   private pickupPulseTimeout: number | null = null;
+  private history: string[][] = [];
+  private helperMode = false;
 
   constructor(
     boardEl: HTMLElement,
@@ -48,9 +50,10 @@ export class KongmingGame {
         this.pegs.add(cell);
       }
     });
+    this.history = [this.snapshotPegs()];
     this.selected = null;
     this.render();
-    this.setStatus('Remove pegs until one remains.');
+    this.setStatus('Remove pegs until one remains in center.');
   }
 
   public hasProgress(): boolean {
@@ -253,6 +256,7 @@ export class KongmingGame {
     this.pegs.add(to);
     this.selected = null;
     this.moveMade = true;
+    this.pushHistoryState();
     this.render();
   }
 
@@ -386,6 +390,37 @@ export class KongmingGame {
       }
     }
     return count;
+  }
+
+  private snapshotPegs(): string[] {
+    return [...this.pegs];
+  }
+
+  private pushHistoryState(): void {
+    this.history.push(this.snapshotPegs());
+  }
+
+  public undo(): void {
+    if (this.history.length <= 1) return;
+    this.history.pop();
+    const previous = this.history[this.history.length - 1];
+    this.pegs = new Set(previous);
+    this.selected = null;
+    this.moveMade = this.history.length > 1;
+    this.render();
+  }
+
+  public requestHint(): void {
+    this.setStatus('Hint functionality is coming soon.');
+  }
+
+  public toggleHelperMode(): void {
+    this.helperMode = !this.helperMode;
+    this.setStatus(this.helperMode ? 'Helper mode on' : 'Helper mode off');
+  }
+
+  public isHelperModeActive(): boolean {
+    return this.helperMode;
   }
 
 }

@@ -28,6 +28,13 @@ resetButton?.addEventListener('click', () => {
   game.setup();
 });
 
+const undoButton = document.getElementById('undo');
+undoButton?.addEventListener('click', () => {
+  game.undo();
+});
+
+const boardActions = document.getElementById('board-actions');
+const helperActions = document.getElementById('helper-actions');
 const infoPanel = document.getElementById('info-panel');
 type MenuActivateEvent = CustomEvent<{ menu?: string }>;
 document.addEventListener('menu:activate', (event: Event) => {
@@ -37,7 +44,14 @@ document.addEventListener('menu:activate', (event: Event) => {
   } else {
     infoPanel?.classList.remove('visible');
   }
+  updateActionVisibility(menu);
 });
+updateActionVisibility('play');
+function updateActionVisibility(menu?: string): void {
+  const showBoard = menu === 'play' || !menu;
+  boardActions?.classList.toggle('hidden', !showBoard);
+  helperActions?.classList.toggle('hidden', menu !== 'helper');
+}
 
 const themes: Array<{ name: string; label: string; className: string }> = [
   { name: 'default', label: 'Theme', className: '' },
@@ -68,6 +82,22 @@ themeButton?.addEventListener('click', () => {
 const storedTheme = localStorage.getItem('kongming-theme');
 const startIndex = themes.findIndex(t => t.name === storedTheme);
 applyTheme(startIndex >= 0 ? startIndex : 0);
+
+const hintButton = document.getElementById('hint');
+hintButton?.addEventListener('click', () => {
+  game.requestHint();
+});
+
+const helperButton = document.getElementById('helper-toggle');
+const updateHelperText = () => {
+  if (!helperButton) return;
+  helperButton.textContent = game.isHelperModeActive() ? 'Helper (on)' : 'Helper (off)';
+};
+helperButton?.addEventListener('click', () => {
+  game.toggleHelperMode();
+  updateHelperText();
+});
+updateHelperText();
 
 const boardMenuButton = document.querySelector<HTMLButtonElement>('.menu-panel.left .menu-item[data-menu="board"]');
 const shapeButton = document.getElementById('shape');
