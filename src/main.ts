@@ -1,5 +1,6 @@
 import { KongmingGame } from './Game';
 import { createMenuControls } from './menu/menuControls';
+import { shapes } from './shapes';
 
 const boardEl = document.getElementById('board');
 const statusEl = document.getElementById('status');
@@ -10,7 +11,12 @@ if (!boardEl || !statusEl || !boardWrapper) {
 }
 
 createMenuControls();
-const game = new KongmingGame(boardEl, statusEl, boardWrapper as HTMLElement);
+
+const storedShapeId = localStorage.getItem('kongming-shape');
+const startShapeIndex = shapes.findIndex(shape => shape.id === storedShapeId);
+let currentShapeIndex = startShapeIndex >= 0 ? startShapeIndex : 0;
+localStorage.setItem('kongming-shape', shapes[currentShapeIndex].id);
+const game = new KongmingGame(boardEl, statusEl, boardWrapper as HTMLElement, shapes[currentShapeIndex]);
 
 const params = new URLSearchParams(window.location.search);
 if (params.get('debugSolved') === '1') {
@@ -18,7 +24,6 @@ if (params.get('debugSolved') === '1') {
 }
 
 const resetButton = document.getElementById('reset');
-const themeButton = document.getElementById('theme');
 resetButton?.addEventListener('click', () => {
   game.setup();
 });
@@ -48,12 +53,14 @@ function applyTheme(index: number): void {
   if (theme.className) {
     document.body.classList.add(theme.className);
   }
+  const themeButton = document.getElementById('theme');
   if (themeButton) {
     themeButton.textContent = 'Theme';
   }
   localStorage.setItem('kongming-theme', theme.name);
 }
 
+const themeButton = document.getElementById('theme');
 themeButton?.addEventListener('click', () => {
   applyTheme(themeIndex + 1);
 });
@@ -61,3 +68,21 @@ themeButton?.addEventListener('click', () => {
 const storedTheme = localStorage.getItem('kongming-theme');
 const startIndex = themes.findIndex(t => t.name === storedTheme);
 applyTheme(startIndex >= 0 ? startIndex : 0);
+
+const boardMenuButton = document.querySelector<HTMLButtonElement>('.menu-panel.left .menu-item[data-menu="board"]');
+const shapeButton = document.getElementById('shape');
+
+function cycleShape(): void {
+  const nextIndex = (currentShapeIndex + 1) % shapes.length;
+  const nextShape = shapes[nextIndex];
+  if (game.hasProgress()) {
+    const proceed = window.confirm('Changing shapes will reset the board. Continue?');
+    if (!proceed) return;
+  }
+  currentShapeIndex = nextIndex;
+  game.changeShape(nextShape);
+  localStorage.setItem('kongming-shape', shapes[currentShapeIndex].id);
+}
+
+boardMenuButton?.addEventListener('click', cycleShape);
+shapeButton?.addEventListener('click', cycleShape);

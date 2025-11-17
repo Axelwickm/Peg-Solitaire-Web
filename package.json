@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "build": "esbuild src/main.ts --bundle --outfile=dist/main.js --minify --sourcemap && tsc --noEmit && cp index.html dist/index.html",
-    "start": "esbuild src/main.ts --bundle --outfile=dist/main.js --sourcemap --serve=8000 --servedir=."
+    "start": "esbuild src/main.ts --bundle --outfile=dist/main.js --sourcemap --serve=8000 --servedir=.",
+    "run": "npm run start"
   },
   "devDependencies": {
     "esbuild": "^0.19.2",

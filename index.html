@@ -32,6 +32,8 @@
 				--solved-border: #0b0b0b;
 				--solved-badge-bg: rgba(0, 0, 0, 0.85);
 				--solved-badge-color: #fff;
+				--drop-circle-color: rgba(255, 255, 255, 0.85);
+				--pickup-pulse-color: rgba(255, 255, 255, 0.9);
 			}
 			body.theme-light {
 				--page-bg-from: #ffffff;
@@ -43,6 +45,8 @@
 				--solved-border: rgba(85, 85, 85, 0.9);
 				--solved-badge-bg: rgba(40, 40, 40, 0.8);
 				--solved-badge-color: #ffffff;
+				--drop-circle-color: rgba(120, 120, 120, 0.75);
+				--pickup-pulse-color: rgba(20, 20, 20, 0.7);
 			}
 			body.theme-dark {
 				--page-bg-from: #07070b;
@@ -54,6 +58,8 @@
 				--solved-border: rgba(255, 255, 255, 0.9);
 				--solved-badge-bg: rgba(0, 0, 0, 0.7);
 				--solved-badge-color: #fff;
+				--drop-circle-color: rgba(255, 255, 255, 0.9);
+				--pickup-pulse-color: rgba(255, 255, 255, 0.95);
 			}
 			h1 {
 				margin: 0;
@@ -182,7 +188,7 @@
 				--light-y: -1;
 				background:
 				radial-gradient(circle at calc(50% + var(--light-x) * 25px) calc(45% - var(--light-y) * 15px), var(--board-radial-from), var(--board-radial-to)),
-				url('board_texture_2.png');
+				url('board_texture.png');
 				background-size: cover;
 				background-blend-mode: overlay;
 				box-shadow:
@@ -192,8 +198,8 @@
 			}
 			body.theme-dark .board-wrapper {
 				box-shadow: 0 0 35px rgba(0, 0, 0, 0.9),
-					calc(var(--light-x) * 34px) calc(var(--light-y) * 28px) 45px rgba(255, 255, 255, 0.45),
-					calc(var(--light-x) * -22px) calc(var(--light-y) * -18px) 38px rgba(8, 5, 2, 0.45);
+				calc(var(--light-x) * 34px) calc(var(--light-y) * 28px) 45px rgba(255, 255, 255, 0.45),
+				calc(var(--light-x) * -22px) calc(var(--light-y) * -18px) 38px rgba(8, 5, 2, 0.45);
 			}
 			.board-wrapper .win-overlay {
 				position: absolute;
@@ -230,22 +236,33 @@
 					box-shadow: 0 0 35px rgba(0, 0, 0, 0.6);
 				}
 			}
+			@keyframes pickup-glow {
+				from {
+					transform: scale(1);
+					opacity: 1;
+				}
+				to {
+					transform: scale(1.3);
+					opacity: 0;
+				}
+			}
 			#board {
-				display: grid;
-				grid-template-columns: repeat(7, clamp(38px, 6vw, 60px));
-				grid-template-rows: repeat(7, clamp(38px, 6vw, 60px));
-				gap: clamp(4px, 0.6vw, 6px);
-				padding: clamp(8px, 1.2vw, 12px);
+				position: relative;
+				width: clamp(260px, 34vw, 420px);
+				aspect-ratio: 1 / 1;
+				margin: 0 auto;
 				background-color: var(--board-bg-color);
-				background-image: url('board_texture.png');
+				background-image: url('board_texture_2.png');
 				background-size: cover;
 				background-position: center;
 				border-radius: 4px;
 				box-shadow: inset 0 5px 18px rgba(255, 255, 255, 0.35), inset 0 -5px 20px rgba(0, 0, 0, 0.4), 0 6px 15px rgba(0, 0, 0, 0.25);
+				overflow: hidden;
 			}
 			.hole {
-				width: clamp(40px, 5vw, 60px);
-				height: clamp(40px, 5vw, 60px);
+				position: absolute;
+				width: var(--hole-size, clamp(40px, 5vw, 60px));
+				height: var(--hole-size, clamp(40px, 5vw, 60px));
 				border-radius: 50%;
 				background: radial-gradient(circle, rgba(255, 255, 255, 0.6), rgba(220, 205, 170, 0.6) 55%, rgba(180, 145, 100, 0.4));
 				display: flex;
@@ -253,13 +270,31 @@
 				justify-content: center;
 				transition: transform 0.2s ease, background 0.2s ease;
 				cursor: pointer;
-				box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+				box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
 				touch-action: none;
 				user-select: none;
+				transform: translate(-50%, -50%);
+			}
+			.hole.pickup-pulse::after {
+				content: '';
+				position: absolute;
+				inset: -6px;
+				border-radius: 50%;
+				border: 2px solid var(--pickup-pulse-color);
+				animation: pickup-glow 0.5s ease-out;
+				pointer-events: none;
 			}
 			.hole.drag-over {
-				box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.7);
 				background: rgba(255, 255, 255, 0.35);
+			}
+			.hole.drag-over::after {
+				content: '';
+				position: absolute;
+				inset: -6px;
+				border-radius: 50%;
+				border: 3px solid var(--drop-circle-color);
+				pointer-events: none;
+				opacity: 1;
 			}
 			.hole.dragging {
 				box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.8);
@@ -273,7 +308,7 @@
 			}
 			.hole.selected {
 				background: rgba(255, 255, 255, 0.55);
-				transform: scale(1.05);
+				transform: translate(-50%, -50%) scale(1.05);
 			}
 			.peg {
 				width: 40px;
@@ -281,9 +316,9 @@
 				border-radius: 50%;
 				background: linear-gradient(145deg, #f0f0f0, #d9d4ce);
 				box-shadow:
-					inset 0 3px 6px rgba(255, 255, 255, 0.75),
-					inset 0 -2px 4px rgba(0, 0, 0, 0.2),
-					0 4px 10px rgba(0, 0, 0, 0.25);
+				inset 0 3px 6px rgba(255, 255, 255, 0.75),
+				inset 0 -2px 4px rgba(0, 0, 0, 0.2),
+				0 4px 10px rgba(0, 0, 0, 0.25);
 				transition: transform 0.2s ease;
 			}
 			.peg.ghost {
@@ -292,33 +327,33 @@
 				pointer-events: none;
 				transform: translate(-50%, -50%);
 				box-shadow:
-					inset 0 4px 8px rgba(255, 255, 255, 0.9),
-					0 6px 12px rgba(0, 0, 0, 0.6);
+				inset 0 4px 8px rgba(255, 255, 255, 0.9),
+				0 6px 12px rgba(0, 0, 0, 0.6);
 			}
 			body.theme-dark .hole {
 				background: radial-gradient(circle at 30% 30%, rgba(81, 91, 110, 0.95), rgba(24, 27, 40, 0.95) 60%);
 				border: 1px solid rgba(255, 255, 255, 0.08);
-				box-shadow: inset 0 4px 15px rgba(0, 0, 0, 0.65),
-					0 4px 8px rgba(0, 0, 0, 0.45);
+				box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.35),
+				0 2px 5px rgba(0, 0, 0, 0.3);
 			}
 			body.theme-dark .peg {
 				background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.9), rgba(200, 210, 220, 0.4));
 				box-shadow:
-					inset 0 3px 6px rgba(255, 255, 255, 0.6),
-					inset 0 -2px 4px rgba(15, 18, 25, 0.6),
-					0 4px 8px rgba(0, 0, 0, 0.5);
+				inset 0 3px 6px rgba(255, 255, 255, 0.6),
+				inset 0 -2px 4px rgba(15, 18, 25, 0.6),
+				0 4px 8px rgba(0, 0, 0, 0.5);
 				border: 1px solid rgba(255, 255, 255, 0.25);
 			}
 			body.theme-light .hole {
 				background: radial-gradient(circle, rgba(255, 255, 255, 1), rgba(240, 240, 240, 0.8) 65%, rgba(200, 170, 120, 0.35));
-				box-shadow: inset 0 4px 8px rgba(0, 0, 0, 0.2);
+				box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.09);
 			}
 			body.theme-light .peg {
 				background: linear-gradient(145deg, #ffffff, #f0f4fb 65%, #e9eff9);
 				box-shadow:
-					inset 0 4px 8px rgba(255, 255, 255, 0.85),
-					inset 0 -3px 5px rgba(0, 0, 0, 0.3),
-					0 4px 10px rgba(0, 0, 0, 0.35);
+				inset 0 4px 8px rgba(255, 255, 255, 0.85),
+				inset 0 -3px 5px rgba(0, 0, 0, 0.3),
+				0 4px 10px rgba(0, 0, 0, 0.35);
 			}
 			#status {
 				min-height: 1.5rem;
@@ -421,28 +456,30 @@
 				</div>
 				<div class="menu-handle"></div>
 			</div>
-		<div class="board-wrapper">
-			<div id="board"></div>
-			<div class="win-overlay" aria-hidden="true"></div>
+			<div class="board-wrapper">
+				<div id="board"></div>
+				<div class="win-overlay" aria-hidden="true"></div>
 				<div id="info-panel" class="info-panel" aria-live="polite">
-				<p>
-					Kongming Chess (also known as Peg Solitaire, Solo Noble, or Marble Solitaire) is a one-player board puzzle
-					where you leap a peg over a neighbor along straight lines into an empty hole and remove the jumped piece. The
-					ambition is to clear the board until only a single peg remains, ideally ending back in the center.
-				</p>
-				<p>
-					It surfaced at the court of Louis XIV by 1697 through Mercure galant, which published the rules and problems
-					for the cross-shaped board we still play, marking the earliest printed reference to the game.
-				</p>
-				<p>
-					The standard setup fills every hole except the center; each valid move removes one peg so the board gradually empties.
-				</p>
-				<div class="info-links">
-					<a href="https://en.wikipedia.org/wiki/Peg_solitaire" target="_blank" rel="noreferrer">Read more on Wikipedia</a>
-					<a href="https://github.com/Axelwickm/Kongming-Chess-Web" target="_blank" rel="noreferrer">View this build on GitHub</a>
+					<p>
+						Kongming Chess (also known as Peg Solitaire, Solo Noble, Solo Goli, Marble Solitaire, or simply Solitaire)
+						is a one-player board puzzle that asks you to jump a peg over a neighboring peg into an empty hole and remove the
+						jumped piece, gradually clearing the board until just one peg remains, ideally back in the center.
+					</p>
+					<p>
+						The first known mention of the game appears in 1697 at the court of Louis XIV, when the French magazine Mercure
+						galant described the cross-shaped board, the rules, and sample problems, making that edition the earliest printed
+						reference to the puzzle.
+					</p>
+					<p>
+						The standard setup fills every allowed hole except the center so every move removes exactly one peg, and the
+						challenge is to keep jumping along straight paths until the board is empty save for a single survivor.
+					</p>
+					<div class="info-links">
+						<a href="https://en.wikipedia.org/wiki/Peg_solitaire" target="_blank" rel="noreferrer">Read more on Wikipedia</a>
+						<a href="https://github.com/Axelwickm/Kongming-Chess-Web" target="_blank" rel="noreferrer">View this build on GitHub</a>
+					</div>
 				</div>
 			</div>
-		</div>
 			<div class="menu-panel right">
 				<div class="menu-line"></div>
 				<div class="menu-items">
