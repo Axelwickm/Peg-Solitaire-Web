@@ -1,0 +1,13 @@
+{
+  "name": "kongming-chess",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --outfile=dist/main.js --minify --sourcemap && tsc --noEmit && cp index.html dist/index.html",
+    "start": "esbuild src/main.ts --bundle --outfile=dist/main.js --sourcemap --serve=8000 --servedir=."
+  },
+  "devDependencies": {
+    "esbuild": "^0.19.2",
+    "typescript": "^5.0.4"
+  }
+}

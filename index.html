@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 	<head>
-		<meta charset="UTF-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Kongming Chess</title>
 		<style>
 			:root {
@@ -29,6 +29,13 @@
 				display: flex;
 				align-items: center;
 				gap: 2rem;
+				width: 100%;
+				max-width: 1100px;
+				padding: 0 1.5rem;
+				box-sizing: border-box;
+				margin: 0 auto;
+				justify-content: center;
+				flex-wrap: wrap;
 			}
 			.menu-panel {
 				position: relative;
@@ -37,6 +44,10 @@
 				height: 260px;
 				padding-left: 20px;
 				min-width: 120px;
+			}
+			.menu-panel.right {
+				padding-right: 20px;
+				padding-left: 0;
 			}
 			.menu-line {
 				position: absolute;
@@ -59,6 +70,15 @@
 				font-weight: 600;
 				color: rgba(27, 27, 31, 0.6);
 			}
+			.menu-panel.left .menu-items {
+				margin-left: 0;
+				margin-right: 20px;
+				text-align: right;
+			}
+			.menu-panel.right .menu-items {
+				text-align: left;
+				margin-left: 40px;
+			}
 			.menu-items button {
 				width: 100%;
 				background: transparent;
@@ -71,20 +91,9 @@
 				letter-spacing: inherit;
 				text-transform: inherit;
 				line-height: 1;
-				text-align: left;
+				text-align: inherit;
 				cursor: pointer;
 				-webkit-appearance: none;
-			}
-
-			.menu-panel.left .menu-items {
-				margin-left: 0;
-				margin-right: 20px;
-				text-align: right;
-			}
-			.menu-panel.right .menu-items {
-				margin-left: 20px;
-				margin-right: 0;
-				text-align: left;
 			}
 			.menu-item.active {
 				color: #101010;
@@ -102,13 +111,12 @@
 				cursor: grab;
 				touch-action: none;
 			}
-			.menu-panel.left .menu-line {
-				left: auto;
-				right: 0;
-			}
+			.menu-panel.left .menu-line,
 			.menu-panel.left .menu-handle {
 				left: auto;
 				right: 2px;
+			}
+			.menu-panel.left .menu-handle {
 				transform: translate(50%, -50%);
 			}
 			.menu-handle.dragging {
@@ -120,10 +128,9 @@
 				border: 1px solid rgba(0, 0, 0, 0.35);
 				--light-x: 0;
 				--light-y: -1;
-				--light-strength: 1;
 				background:
 					radial-gradient(circle at calc(50% + var(--light-x) * 25px) calc(45% - var(--light-y) * 15px), rgba(163, 97, 22, 0.9), rgba(90, 47, 22, 0.95) 65%),
-					url('board_texture.png');
+					url('board_texture_2.png');
 				background-size: cover;
 				background-blend-mode: overlay;
 				box-shadow:
@@ -138,7 +145,7 @@
 				gap: 6px;
 				padding: 12px;
 				background-color: #5a2f16;
-				background-image: url('board_texture_2.png');
+				background-image: url('board_texture.png');
 				background-size: cover;
 				background-position: center;
 				border-radius: 4px;
@@ -174,19 +181,6 @@
 				background: radial-gradient(circle at 30% 30%, #ffffff, #d5dae1 60%, #b1b7c0);
 				box-shadow: inset 0 4px 6px rgba(255, 255, 255, 0.7), inset 0 -4px 6px rgba(115, 115, 130, 0.4), 0 5px 12px rgba(0, 0, 0, 0.3);
 			}
-			button {
-				padding: 0.6rem 1.4rem;
-				border: none;
-				border-radius: 999px;
-				background: #06d6a0;
-				color: #101010;
-				font-weight: bold;
-				cursor: pointer;
-				transition: transform 0.2s ease;
-			}
-			button:hover {
-				transform: translateY(-2px);
-			}
 			#status {
 				min-height: 1.5rem;
 			}
@@ -218,407 +212,34 @@
 	<body>
 		<h1>Kongming Chess</h1>
 		<div id="status"></div>
-  <div class="content-row">
-    <div class="menu-panel left">
-      <div class="menu-line"></div>
-      <div class="menu-items">
-        <button class="menu-item" type="button" data-menu="board">Board</button>
-        <button class="menu-item" type="button" data-menu="info">Info</button>
-        <button class="menu-item" type="button" data-menu="buy">Buy</button>
-      </div>
-      <div class="menu-handle"></div>
-    </div>
-  <div class="board-wrapper">
-    <div id="board"></div>
-  </div>
-  <div class="menu-panel right">
-    <div class="menu-line"></div>
-    <div class="menu-items">
-      <button class="menu-item" type="button" data-menu="play">Play</button>
-      <button class="menu-item" type="button" data-menu="ai">AI</button>
-      <button class="menu-item" type="button" data-menu="auto">Auto</button>
-    </div>
-    <div class="menu-handle"></div>
-  </div>
-</div>
-  <div class="bottom-controls">
-    <button id="reset" type="button">Reset Board</button>
-    <button id="shape" type="button">Shape</button>
-    <button id="theme" type="button">Theme</button>
-  </div>
-  <script>
-    class MenuControl {
-      constructor(panel) {
-        this.panel = panel;
-        this.line = panel.querySelector('.menu-line');
-        this.handle = panel.querySelector('.menu-handle');
-        this.items = Array.from(panel.querySelectorAll('.menu-item'));
-        this.menuPositions = [];
-        this.handleY = 0;
-        this.minHandleY = 0;
-        this.maxHandleY = 0;
-        this.velocity = 0;
-        this.dragging = false;
-        this.inertiaId = null;
-        this.lastPointerTime = 0;
-        this.lastFrameTime = null;
-        this.activeIndex = 0;
-        this.targetIndex = 0;
-        this.moveHandler = e => this.moveHandle(e);
-        this.upHandler = () => this.endDrag();
-        this.handle?.addEventListener('pointerdown', e => this.startDrag(e));
-        this.items.forEach((item, index) => {
-          item.addEventListener('click', e => {
-            e.preventDefault();
-            this.stopInertia();
-            this.targetIndex = index;
-            this.updateActiveMenu();
-            this.velocity = 0;
-            this.startInertia();
-          });
-        });
-        this.updateGeometry();
-      }
-
-      updateGeometry() {
-        if (!this.panel || !this.line) return;
-        const panelRect = this.panel.getBoundingClientRect();
-        this.menuPositions = this.items.map(item => {
-          const rect = item.getBoundingClientRect();
-          return rect.top + rect.height / 2 - panelRect.top;
-        });
-        this.minHandleY = this.line.offsetTop;
-        this.maxHandleY = this.line.offsetTop + this.line.offsetHeight;
-        if (!this.handleY) {
-          this.handleY = this.menuPositions[0] ?? (this.minHandleY + this.maxHandleY) / 2;
-        }
-        this.setHandlePosition(this.handleY);
-      }
-
-      setHandlePosition(y) {
-        if (!this.handle) return;
-        this.handleY = Math.max(this.minHandleY, Math.min(this.maxHandleY, y));
-        this.handle.style.top = `${this.handleY}px`;
-        this.updateActiveMenu();
-      }
-
-      updateActiveMenu() {
-        if (!this.menuPositions.length) return Infinity;
-        let nearestIndex = 0;
-        let nearestDist = Infinity;
-        this.menuPositions.forEach((pos, index) => {
-          const dist = Math.abs(this.handleY - pos);
-          if (dist < nearestDist) {
-            nearestDist = dist;
-            nearestIndex = index;
-          }
-        });
-        const highlightIndex = this.targetIndex ?? nearestIndex;
-        this.items.forEach((item, index) => {
-          item.classList.toggle('active', index === highlightIndex);
-        });
-        this.activeIndex = nearestIndex;
-        return nearestDist;
-      }
-
-      startDrag(e) {
-        if (!this.panel || !this.handle) return;
-        this.dragging = true;
-        this.stopInertia();
-        this.handle.classList.add('dragging');
-        this.lastPointerTime = e.timeStamp || performance.now();
-        this.targetIndex = null;
-        document.addEventListener('pointermove', this.moveHandler);
-        document.addEventListener('pointerup', this.upHandler);
-        this.moveHandle(e);
-        e.preventDefault();
-      }
-
-      moveHandle(e) {
-        if (!this.dragging || !this.panel) return;
-        const panelTop = this.panel.getBoundingClientRect().top;
-        const targetY = e.clientY - panelTop;
-        const now = e.timeStamp || performance.now();
-        const dt = Math.max((now - this.lastPointerTime) / 1000, 1 / 120);
-        this.velocity = (targetY - this.handleY) / dt;
-        this.lastPointerTime = now;
-        this.setHandlePosition(targetY);
-        if (this.targetIndex !== null) {
-          const pos = this.menuPositions[this.targetIndex] ?? this.handleY;
-          if (Math.abs(this.handleY - pos) > 20) {
-            this.targetIndex = null;
-          }
-        }
-      }
-
-      endDrag() {
-        this.dragging = false;
-        this.handle?.classList.remove('dragging');
-        document.removeEventListener('pointermove', this.moveHandler);
-        document.removeEventListener('pointerup', this.upHandler);
-        this.targetIndex = this.activeIndex;
-        this.startInertia();
-      }
-
-      startInertia() {
-        this.stopInertia();
-        this.lastFrameTime = null;
-        this.inertiaId = requestAnimationFrame(ts => this.animateHandle(ts));
-      }
-
-      stopInertia() {
-        if (this.inertiaId) cancelAnimationFrame(this.inertiaId);
-        this.inertiaId = null;
-        this.lastFrameTime = null;
-      }
-
-      animateHandle(timestamp) {
-        if (!this.menuPositions.length) return;
-        if (this.lastFrameTime === null) {
-          this.lastFrameTime = timestamp;
-        }
-        const dt = (timestamp - this.lastFrameTime) / 1000;
-        this.lastFrameTime = timestamp;
-        this.handleY += this.velocity * dt;
-        if (this.handleY < this.minHandleY) {
-          this.handleY = this.minHandleY;
-          this.velocity *= -0.3;
-        } else if (this.handleY > this.maxHandleY) {
-          this.handleY = this.maxHandleY;
-          this.velocity *= -0.3;
-        }
-        this.setHandlePosition(this.handleY);
-        const dist = Math.abs(this.handleY - (this.menuPositions[this.activeIndex] ?? this.handleY));
-        this.velocity *= Math.pow(0.92, dt * 60);
-        const attractIndex = this.targetIndex ?? this.activeIndex;
-        const attractTarget = this.menuPositions[attractIndex] ?? this.handleY;
-        const attractionStrength = 4;
-        const magnetFactor = 1 + dist / 15;
-        this.velocity += (attractTarget - this.handleY) * attractionStrength * magnetFactor * dt;
-        if (dist < 4 && attractIndex === this.activeIndex) {
-          this.velocity = 0;
-          this.setHandlePosition(attractTarget);
-          return;
-        }
-        this.inertiaId = requestAnimationFrame(ts => this.animateHandle(ts));
-      }
-    }
-
-    const menuControls = Array.from(document.querySelectorAll('.menu-panel')).map(panel => new MenuControl(panel));
-    window.addEventListener('resize', () => menuControls.forEach(ctrl => ctrl.updateGeometry()));
-  </script>
-  <script>
-    class KongmingGame {
-      constructor(boardEl, statusEl) {
-        this.boardEl = boardEl;
-        this.statusEl = statusEl;
-        this.draggingPegKey = null;
-        this.dragTargetKey = null;
-        this.dragHoverKey = null;
-        this.dragMoved = false;
-        this.skipClickUntil = 0;
-        this.selected = null;
-        this.pegs = new Set();
-        this.validCells = new Set();
-        for (let r = 0; r < 7; r++) {
-          for (let c = 0; c < 7; c++) {
-            const cross = (r >= 2 && r <= 4) || (c >= 2 && c <= 4);
-            if (cross) this.validCells.add(`${r},${c}`);
-          }
-        }
-        this.boundDragMove = this.handleDragMove.bind(this);
-        this.boundDragEnd = this.handleDragEnd.bind(this);
-        this.setup();
-      }
-
-      setup() {
-        if (this.boardEl) this.boardEl.innerHTML = '';
-        this.pegs.clear();
-        this.validCells.forEach(cell => {
-          if (cell !== '3,3') this.pegs.add(cell);
-        });
-        this.selected = null;
-        this.render();
-        this.setStatus('Remove pegs until one remains.');
-      }
-
-      render() {
-        if (!this.boardEl) return;
-        this.boardEl.innerHTML = '';
-        for (let r = 0; r < 7; r++) {
-          for (let c = 0; c < 7; c++) {
-            const key = `${r},${c}`;
-            const hole = document.createElement('div');
-            hole.className = 'hole';
-            if (!this.validCells.has(key)) {
-              hole.classList.add('disabled');
-            } else if (this.selected === key) {
-              hole.classList.add('selected');
-            }
-            hole.dataset.pos = key;
-            if (this.pegs.has(key)) {
-              const peg = document.createElement('div');
-              peg.className = 'peg';
-              hole.appendChild(peg);
-            }
-            hole.addEventListener('pointerdown', e => this.startPegDrag(e, key));
-            hole.addEventListener('click', e => this.handleHoleClick(key, e));
-            this.boardEl.appendChild(hole);
-          }
-        }
-        if (this.pegs.size === 1) {
-          this.setStatus(this.pegs.has('3,3') ? 'Perfect! Final peg in the center.' : 'Great! Only one peg left.');
-        } else if (![...this.validMoves()].length) {
-          this.setStatus('No moves left. Reset to try again.');
-        }
-      }
-
-      setStatus(text) {
-        if (this.statusEl) this.statusEl.textContent = text;
-      }
-
-      handleHoleClick(key, event) {
-        if (performance.now() < this.skipClickUntil) {
-          event.preventDefault();
-          return;
-        }
-        this.onHoleClick(key);
-      }
-
-      onHoleClick(key) {
-        if (!this.validCells.has(key)) return;
-        if (this.pegs.has(key)) {
-          this.selected = this.selected === key ? null : key;
-          this.render();
-          return;
-        }
-        if (!this.selected) return;
-        const move = this.validateMove(this.selected, key);
-        if (!move) return;
-        this.pegs.delete(this.selected);
-        this.pegs.delete(move.jump);
-        this.pegs.add(key);
-        this.selected = null;
-        this.render();
-      }
-
-      validateMove(from, to) {
-        const [fr, fc] = from.split(',').map(Number);
-        const [tr, tc] = to.split(',').map(Number);
-        const dr = tr - fr;
-        const dc = tc - fc;
-        const isStraight = (dr === 0 && Math.abs(dc) === 2) || (dc === 0 && Math.abs(dr) === 2);
-        if (!isStraight) return null;
-        const mr = fr + dr / 2;
-        const mc = fc + dc / 2;
-        const jumpedKey = `${mr},${mc}`;
-        if (!this.pegs.has(jumpedKey) || this.pegs.has(to)) return null;
-        return { jump: jumpedKey };
-      }
-
-      *validMoves() {
-        for (const peg of this.pegs) {
-          const [r, c] = peg.split(',').map(Number);
-          const options = [
-            [r, c + 2],
-            [r, c - 2],
-            [r + 2, c],
-            [r - 2, c],
-          ];
-          for (const [nr, nc] of options) {
-            const key = `${nr},${nc}`;
-            if (!this.validCells.has(key)) continue;
-            if (this.validateMove(peg, key)) yield { from: peg, to: key };
-          }
-        }
-      }
-
-      startPegDrag(event, key) {
-        if (!this.pegs.has(key)) return;
-        this.draggingPegKey = key;
-        this.dragTargetKey = key;
-        this.dragMoved = false;
-        this.setDragHover(key);
-        document.addEventListener('pointermove', this.boundDragMove);
-        document.addEventListener('pointerup', this.boundDragEnd);
-        event.preventDefault();
-      }
-
-      handleDragMove(event) {
-        if (!this.draggingPegKey) return;
-        this.dragMoved = true;
-        const targetKey = this.getHoleKeyFromPoint(event);
-        this.dragTargetKey = targetKey;
-        if (targetKey) {
-          this.setDragHover(targetKey);
-        } else {
-          this.clearDragHover();
-        }
-      }
-
-      handleDragEnd() {
-        if (this.draggingPegKey && this.dragTargetKey && this.dragTargetKey !== this.draggingPegKey) {
-          this.attemptMove(this.draggingPegKey, this.dragTargetKey);
-        }
-        this.draggingPegKey = null;
-        this.dragTargetKey = null;
-        this.clearDragHover();
-        document.removeEventListener('pointermove', this.boundDragMove);
-        document.removeEventListener('pointerup', this.boundDragEnd);
-        if (this.dragMoved) {
-          this.skipClickUntil = performance.now() + 200;
-        }
-      }
-
-      attemptMove(from, to) {
-        const move = this.validateMove(from, to);
-        if (!move) return false;
-        this.pegs.delete(from);
-        this.pegs.delete(move.jump);
-        this.pegs.add(to);
-        this.selected = null;
-        this.render();
-        return true;
-      }
-
-      setDragHover(key) {
-        if (this.dragHoverKey === key) return;
-        if (this.dragHoverKey) {
-          const prev = this.getHoleElement(this.dragHoverKey);
-          if (prev) prev.classList.remove('drag-over');
-        }
-        this.dragHoverKey = key;
-        if (key) {
-          const next = this.getHoleElement(key);
-          if (next) next.classList.add('drag-over');
-        }
-      }
-
-      clearDragHover() {
-        this.setDragHover(null);
-      }
-
-      getHoleElement(key) {
-        if (!key) return null;
-        return this.boardEl.querySelector(`[data-pos="${key}"]`);
-      }
-
-      getHoleKeyFromPoint(event) {
-        let target = document.elementFromPoint(event.clientX, event.clientY);
-        while (target && target !== this.boardEl && !target.classList.contains('hole')) {
-          target = target.parentElement;
-        }
-        if (target && target.dataset && target.dataset.pos) {
-          return target.dataset.pos;
-        }
-        return null;
-      }
-    }
-
-    const boardEl = document.getElementById('board');
-    const statusEl = document.getElementById('status');
-    const game = new KongmingGame(boardEl, statusEl);
-    document.getElementById('reset').addEventListener('click', () => game.setup());
-  </script>
+		<div class="content-row">
+			<div class="menu-panel left">
+				<div class="menu-line"></div>
+				<div class="menu-items">
+					<button class="menu-item" type="button" data-menu="board">Board</button>
+					<button class="menu-item" type="button" data-menu="info">Info</button>
+					<button class="menu-item" type="button" data-menu="buy">Buy</button>
+				</div>
+				<div class="menu-handle"></div>
+			</div>
+			<div class="board-wrapper">
+				<div id="board"></div>
+			</div>
+			<div class="menu-panel right">
+				<div class="menu-line"></div>
+				<div class="menu-items">
+					<button class="menu-item" type="button" data-menu="play">Play</button>
+					<button class="menu-item" type="button" data-menu="ai">AI</button>
+					<button class="menu-item" type="button" data-menu="auto">Auto</button>
+				</div>
+				<div class="menu-handle"></div>
+			</div>
+		</div>
+		<div class="bottom-controls">
+			<button id="reset" type="button">Reset Board</button>
+			<button id="shape" type="button">Shape</button>
+			<button id="theme" type="button">Theme</button>
+		</div>
+		<script type="module" src="./dist/main.js"></script>
 	</body>
 </html>
