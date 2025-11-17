@@ -11,10 +11,13 @@ export class KongmingGame {
   private validCells = new Set<string>();
   private boundDragMove: (event: PointerEvent) => void;
   private boundDragEnd: () => void;
+  private boardWrapper: HTMLElement;
+  private solved = false;
 
-  constructor(boardEl: HTMLElement, statusEl: HTMLElement) {
+  constructor(boardEl: HTMLElement, statusEl: HTMLElement, boardWrapper: HTMLElement) {
     this.boardEl = boardEl;
     this.statusEl = statusEl;
+    this.boardWrapper = boardWrapper;
     for (let r = 0; r < 7; r++) {
       for (let c = 0; c < 7; c++) {
         const cross = (r >= 2 && r <= 4) || (c >= 2 && c <= 4);
@@ -64,6 +67,7 @@ export class KongmingGame {
         this.boardEl.appendChild(hole);
       }
     }
+    this.updateWinState();
     if (this.pegs.size === 1) {
       this.setStatus(this.pegs.has('3,3') ? 'Perfect! Final peg in the center.' : 'Great! Only one peg left.');
     } else if ([...this.validMoves()].length === 0) {
@@ -210,5 +214,16 @@ export class KongmingGame {
       return target.dataset.pos;
     }
     return null;
+  }
+
+  private updateWinState(): void {
+    const solved = this.pegs.size === 1 && this.pegs.has('3,3');
+    this.solved = solved;
+    this.boardWrapper.classList.toggle('solved', solved);
+  }
+
+  public forceWinState(): void {
+    this.solved = true;
+    this.boardWrapper.classList.add('solved');
   }
 }
