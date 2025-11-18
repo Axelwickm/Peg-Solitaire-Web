@@ -1,5 +1,7 @@
 node_modules/
 dist/
+deployment/
+venv/
 .DS_Store
 *.log
 *.tsbuildinfo

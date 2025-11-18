@@ -2,7 +2,7 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 		<title>Peg Solitaire</title>
 		<meta name="description" content="Play Peg Solitaire (Kongming Chess) online. Jump pegs to clear the board, explore cross and triangle layouts, and use helper hints or the auto-solver to master the puzzle.">
 		<meta property="og:type" content="website">
@@ -14,10 +14,10 @@
 		<meta name="twitter:title" content="Peg Solitaire (Kongming Chess) | Play Online">
 		<meta name="twitter:description" content="Play the classic Peg Solitaire puzzle online with helpers, hints, and an auto-solver.">
 		<meta name="twitter:image" content="https://axelwickm.github.io/Kongming-Chess-Web/board.webp">
-		<link rel="icon" href="icon.png">
+		<link rel="icon" href="static/icon.png">
 		<link rel="canonical" href="https://axelwickm.github.io/Kongming-Chess-Web/">
-		<link rel="preload" href="board.webp" as="image" fetchpriority="high">
-		<link rel="preload" href="./dist/main.js" as="script">
+		<link rel="preload" href="static/board.webp" as="image" fetchpriority="high">
+		<link rel="preload" href="./main.js" as="script">
 		<script type="application/ld+json">
 			{
 				"@context": "https://schema.org",
@@ -40,6 +40,7 @@
 				font-family: system-ui, sans-serif;
 				--peg-light-target-x: 10;
 				--peg-light-target-y: -4;
+				--menu-line-color: #d0d2d7;
 			}
 			body {
 				margin: 0;
@@ -52,6 +53,7 @@
 				background: #ffffff;
 				color: var(--text-color);
 				transition: background-color 0.4s ease, color 0.4s ease, background 0.4s ease;
+				text-align: center;
 			}
 			:root {
 				--page-bg-from: #fefefe;
@@ -85,6 +87,7 @@
 				--page-bg-from: #07070b;
 				--page-bg-to: #1d1e25;
 				--text-color: #f7f7ff;
+				--menu-line-color: #737a8f;
 				--board-radial-from: rgba(53, 93, 118, 0.95);
 				--board-radial-to: rgba(20, 26, 35, 0.95);
 				--board-bg-color: #1f222f;
@@ -111,6 +114,7 @@
 				justify-content: center;
 				flex-wrap: nowrap;
 				-webkit-overflow-scrolling: touch;
+				overflow: hidden;
 			}
 			.menu-panel {
 				position: relative;
@@ -122,6 +126,7 @@
 				user-select: none;
 				-webkit-user-select: none;
 				-moz-user-select: none;
+				z-index: 5;
 			}
 			.menu-panel.right {
 				padding-right: clamp(12px, 2vw, 20px);
@@ -134,7 +139,7 @@
 				bottom: 8px;
 				width: 4px;
 				border-radius: 999px;
-				background: #d0d2d7;
+				background: var(--menu-line-color);
 			}
 			.menu-items {
 				display: flex;
@@ -239,7 +244,7 @@
 				position: absolute;
 				inset: 0;
 				border-radius: inherit;
-				background: url('board.webp') center/cover no-repeat;
+				background: url('static/board.webp') center/cover no-repeat;
 				background-size: 105%;
 				transform: scale(1.05);
 				transform-origin: center;
@@ -459,7 +464,7 @@
 				height: 35px;
 				aspect-ratio: 1 / 1;
 				border-radius: 50%;
-				background: url('ball.webp') center/contain no-repeat;
+				background: url('static/ball.webp') center/contain no-repeat;
 				background-size: contain;
 				box-shadow:
 				inset 0 3px 6px rgba(255, 255, 255, 0.75),
@@ -533,6 +538,8 @@
 			}
 			#status {
 				min-height: 1.5rem;
+				width: 100%;
+				text-align: center;
 			}
 			.board-actions,
 			.bottom-controls,
@@ -632,7 +639,7 @@
 				left: 50%;
 				transform: translate(-50%, 12px);
 				width: min(340px, 90vw);
-				background: rgba(255, 255, 255, 0.95);
+				background: rgba(255, 255, 255, 1.0);
 				border-radius: 16px;
 				padding: 0.9rem;
 				box-shadow: 0 25px 40px rgba(0, 0, 0, 0.35);
@@ -823,6 +830,70 @@
 			body.theme-dark .info-panel .info-links a {
 				color: #85b9ff;
 			}
+			.menu-label {
+				display: none;
+			}
+			body.theme-dark .menu-label {
+				background: rgba(18, 20, 28, 0.92);
+				box-shadow: 0 10px 22px rgba(0, 0, 0, 0.7);
+			}
+			@media (max-width: 600px) {
+				.menu-panel .menu-items {
+					position: absolute;
+					top: 50%;
+					left: 50%;
+					transform: translate(-50%, -50%);
+					width: 100%;
+					align-items: center;
+					text-align: center;
+				}
+				.menu-panel.left .menu-items,
+				.menu-panel.right .menu-items {
+					margin: 0;
+				}
+				.menu-panel.left .menu-items {
+					right: 2px;
+				}
+				.menu-panel.right .menu-items {
+					left: 2px;
+				}
+				.menu-panel .menu-items {
+					flex-direction: column;
+					gap: 0.65rem;
+				}
+				.menu-panel .menu-items button {
+					width: 12px;
+					height: 3px;
+					padding: 0;
+					background: var(--menu-line-color);
+					border-radius: 999px;
+					color: transparent;
+					text-indent: -9999px;
+				}
+				.menu-label {
+					position: absolute;
+					display: block;
+					position: absolute;
+					top: -40px;
+					padding: 0.25rem 0.75rem;
+					border-radius: 999px;
+					font-size: 0.65rem;
+					letter-spacing: 0.25em;
+					text-transform: uppercase;
+					white-space: nowrap;
+					background: rgba(255, 255, 255, 0.9);
+					color: inherit;
+					z-index: 6;
+				}
+				.menu-panel.left .menu-label {
+					right: 2px;
+					transform: translateX(50%);
+				}
+				.menu-panel.right .menu-label {
+					left: 2px;
+					transform: translateX(-50%);
+				}
+			}
 		</style>
 	</head>
 	<body>
@@ -838,6 +909,7 @@
 		<div id="status"></div>
 		<div class="content-row">
 			<div class="menu-panel left">
+				<div class="menu-label" aria-live="polite"></div>
 				<div class="menu-line"></div>
 				<div class="menu-items">
 					<button class="menu-item" type="button" data-menu="board">Board</button>
@@ -872,6 +944,7 @@
 				</div>
 			</div>
 			<div class="menu-panel right">
+				<div class="menu-label" aria-live="polite"></div>
 				<div class="menu-line"></div>
 				<div class="menu-items">
 					<button class="menu-item" type="button" data-menu="play">Play</button>
@@ -921,12 +994,27 @@
 				</div>
 			</div>
 		</div>
-		<script type="module" src="./dist/main.js"></script>
+		<script>
+			(() => {
+				const panels = Array.from(document.querySelectorAll('.menu-panel'));
+				panels.forEach(panel => {
+					const label = panel.querySelector('.menu-label');
+					const updateLabel = () => {
+						if (!label) return;
+						const active = panel.querySelector('.menu-item.active');
+						label.textContent = (active?.textContent ?? '').trim();
+						};
+						panel.addEventListener('menu:activate', updateLabel);
+						updateLabel();
+						});
+						})();
+		</script>
+		<script type="module" src="./main.js"></script>
 		<script>
 			if ('serviceWorker' in navigator) {
 				window.addEventListener('load', () => {
 					navigator.serviceWorker
-					.register('./sw.js', { scope: './' })
+					.register('./static/sw.js', { scope: './' })
 					.catch(error => console.error('SW registration failed', error));
 					});
 				}
