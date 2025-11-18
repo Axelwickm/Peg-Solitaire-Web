@@ -1,4 +1,5 @@
 import { KongmingGame } from './Game';
+import { initPlayStats } from './playStats';
 import { createMenuControls } from './menu/menuControls';
 import { shapes } from './shapes';
 
@@ -16,7 +17,13 @@ const storedShapeId = localStorage.getItem('kongming-shape');
 const startShapeIndex = shapes.findIndex(shape => shape.id === storedShapeId);
 let currentShapeIndex = startShapeIndex >= 0 ? startShapeIndex : 0;
 localStorage.setItem('kongming-shape', shapes[currentShapeIndex].id);
-const game = new KongmingGame(boardEl, statusEl, boardWrapper as HTMLElement, shapes[currentShapeIndex]);
+const game = new KongmingGame(
+  boardEl,
+  statusEl,
+  boardWrapper as HTMLElement,
+  shapes[currentShapeIndex],
+);
+const playStatsController = initPlayStats(game);
 const solverOverlay = document.querySelector<SVGSVGElement>('.solver-overlay');
 if (solverOverlay) {
   game.setSolverOverlay(solverOverlay);
@@ -75,7 +82,7 @@ const themes: Array<{ name: string; label: string; className: string }> = [
 ];
 let themeIndex = 0;
 
-function applyTheme(index: number): void {
+function applyTheme(index: number, announce = false): void {
   themeIndex = (index + themes.length) % themes.length;
   document.body.classList.remove('theme-light', 'theme-dark');
   const theme = themes[themeIndex];
@@ -87,16 +94,19 @@ function applyTheme(index: number): void {
     themeButton.textContent = 'Theme';
   }
   localStorage.setItem('kongming-theme', theme.name);
+  if (announce) {
+    game.updateStatusMessage(`Theme: ${theme.label}`);
+  }
 }
 
 const themeButton = document.getElementById('theme');
 themeButton?.addEventListener('click', () => {
-  applyTheme(themeIndex + 1);
+  applyTheme(themeIndex + 1, true);
 });
 
 const storedTheme = localStorage.getItem('kongming-theme');
 const startIndex = themes.findIndex(t => t.name === storedTheme);
-applyTheme(startIndex >= 0 ? startIndex : 0);
+applyTheme(startIndex >= 0 ? startIndex : 0, false);
 
 const autoPlayButton = document.getElementById('auto-play') as HTMLButtonElement | null;
 const hintButton = document.getElementById('hint');
@@ -151,9 +161,6 @@ autoSolveButton?.addEventListener('click', () => {
     }
   });
 });
-document.addEventListener('solver:cleared', () => {
-  resetAutoSolveState();
-});
 document.addEventListener('autoplay:started', () => {
   if (autoPlayButton) {
     autoPlayButton.textContent = 'Playing...';
@@ -174,7 +181,9 @@ autoPlayButton?.addEventListener('click', () => {
   game.startAutoPlayPlan();
 });
 
-const boardMenuButton = document.querySelector<HTMLButtonElement>('.menu-panel.left .menu-item[data-menu="board"]');
+const boardMenuButton = document.querySelector<HTMLButtonElement>(
+  '.menu-panel.left .menu-item[data-menu="board"]',
+);
 const shapeButton = document.getElementById('shape');
 
 function cycleShape(): void {
@@ -188,6 +197,8 @@ function cycleShape(): void {
   game.changeShape(nextShape);
   localStorage.setItem('kongming-shape', shapes[currentShapeIndex].id);
   resetAutoSolveState();
+  playStatsController?.refreshShapeFilter(shapes[currentShapeIndex].id);
+  game.updateStatusMessage(`Shape: ${nextShape.name}`);
 }
 
 boardMenuButton?.addEventListener('click', cycleShape);

@@ -14,6 +14,7 @@
 		<meta name="twitter:title" content="Peg Solitaire (Kongming Chess) | Play Online">
 		<meta name="twitter:description" content="Play the classic Peg Solitaire puzzle online with helpers, hints, and an auto-solver.">
 		<meta name="twitter:image" content="https://axelwickm.github.io/Kongming-Chess-Web/board.webp">
+		<link rel="icon" href="icon.png">
 		<link rel="canonical" href="https://axelwickm.github.io/Kongming-Chess-Web/">
 		<link rel="preload" href="board.webp" as="image" fetchpriority="high">
 		<link rel="preload" href="./dist/main.js" as="script">
@@ -537,40 +538,245 @@
 			.bottom-controls,
 			.auto-actions {
 				display: flex;
-				gap: 1.5rem;
-				align-items: center;
+				gap: clamp(0.75rem, 2vw, 1.2rem);
+				align-items: flex-start;
 				justify-content: center;
-				padding: 0.9rem 0;
-				margin: 0.5rem auto;
-				width: 100%;
-				max-width: 640px;
+				width: auto;
 			}
-			.board-actions button,
+			.board-buttons button,
 			.bottom-controls button,
 			.auto-actions button {
-				padding: 0.6rem 1.4rem;
+				padding: 0.4rem 1.4rem;
+				min-width: 80px;
 				background: transparent;
 				border: 0;
 				color: inherit;
 				font: inherit;
 				text-transform: uppercase;
-				letter-spacing: 0.3em;
-				font-size: 0.75rem;
+				letter-spacing: 0.25em;
+				font-size: 0.7rem;
 				cursor: pointer;
+				transition: color 0.2s ease;
 			}
-			.board-actions button:hover,
+			.board-buttons button:hover,
 			.bottom-controls button:hover,
 			.auto-actions button:hover {
 				color: #101010;
 			}
-			body.theme-dark .board-actions button:hover,
+			body.theme-dark .board-buttons button:hover,
 			body.theme-dark .bottom-controls button:hover,
 			body.theme-dark .auto-actions button:hover {
 				color: #ffffff;
 			}
-			.board-actions.hidden,
-			.bottom-controls.hidden {
+			.board-actions.hidden {
 				display: none;
+			}
+			.bottom-controls.hidden,
+			.auto-actions.hidden {
+				display: none;
+			}
+			.play-stats {
+				position: fixed;
+				bottom: 1rem;
+				left: 50%;
+				transform: translateX(-50%);
+				display: flex;
+				align-items: center;
+				text-transform: uppercase;
+				letter-spacing: 0.3em;
+				font-size: 0.65rem;
+				color: rgba(27, 27, 31, 0.8);
+				z-index: 6;
+				min-height: 2.6rem;
+			}
+			body.theme-dark .play-stats {
+				color: rgba(255, 255, 255, 0.9);
+			}
+			.timer-trigger {
+				border: 0;
+				background: transparent;
+				color: inherit;
+				font: inherit;
+				text-transform: inherit;
+				letter-spacing: inherit;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				cursor: pointer;
+			}
+			.timer-trigger strong {
+				font-size: 0.95rem;
+				font-weight: 700;
+			}
+			.play-stats.highscore {
+				border: 2px solid var(--solved-border);
+				box-shadow:
+				0 0 16px rgba(0, 0, 0, 0.35),
+				0 0 30px rgba(255, 189, 0, 0.5);
+			}
+			.play-stats.highscore::after {
+				content: 'High score';
+				position: absolute;
+				top: -1.1rem;
+				right: 0.6rem;
+				padding: 0.15rem 0.6rem;
+				background: var(--solved-badge-bg);
+				color: var(--solved-badge-color);
+				font-size: 0.55rem;
+				letter-spacing: 0.3em;
+				border-radius: 999px;
+			}
+			.play-stats-popup {
+				position: absolute;
+				bottom: 120%;
+				left: 50%;
+				transform: translate(-50%, 12px);
+				width: min(340px, 90vw);
+				background: rgba(255, 255, 255, 0.95);
+				border-radius: 16px;
+				padding: 0.9rem;
+				box-shadow: 0 25px 40px rgba(0, 0, 0, 0.35);
+				opacity: 0;
+				visibility: hidden;
+				pointer-events: none;
+				transition: transform 0.28s ease, opacity 0.28s ease, visibility 0.28s;
+				z-index: 4;
+			}
+			body.theme-dark .play-stats-popup {
+				background: rgba(18, 18, 26, 0.95);
+				border: 1px solid rgba(255, 255, 255, 0.1);
+			}
+			.play-stats-popup::before {
+				content: '';
+				position: absolute;
+				bottom: -10px;
+				left: 50%;
+				transform: translateX(-50%);
+				border-width: 10px 10px 0 10px;
+				border-style: solid;
+				border-color: rgba(255, 255, 255, 0.95) transparent transparent transparent;
+			}
+			body.theme-dark .play-stats-popup::before {
+				border-color: rgba(18, 18, 26, 0.95) transparent transparent transparent;
+			}
+			.play-stats-popup.visible {
+				transform: translate(-50%, 0);
+				opacity: 1;
+				visibility: visible;
+				pointer-events: auto;
+			}
+			.play-stats-popup .popup-heading {
+				font-size: 0.8rem;
+				letter-spacing: 0.3em;
+				margin-bottom: 0.6rem;
+				color: inherit;
+			}
+			.play-stats-popup svg {
+				width: 100%;
+				height: 160px;
+				border-radius: 12px;
+				background: rgba(0, 0, 0, 0.02);
+				margin-bottom: 0.5rem;
+			}
+			.popup-footer {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 0.5rem;
+				font-size: 0.7rem;
+				letter-spacing: 0.2em;
+			}
+			#export-stats {
+				border: 0;
+				background: rgba(0, 0, 0, 0.05);
+				color: inherit;
+				font: inherit;
+				padding: 0.35rem 0.8rem;
+				border-radius: 999px;
+				cursor: pointer;
+			}
+			body.theme-dark #export-stats {
+				background: rgba(255, 255, 255, 0.1);
+			}
+			.play-stats-popup .popup-controls {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 0.5rem;
+				font-size: 0.6rem;
+				letter-spacing: 0.3em;
+				margin-bottom: 0.4rem;
+				width: 100%;
+			}
+			.play-stats-popup .legend {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+			}
+			.play-stats-popup .legend span {
+				display: inline-flex;
+				align-items: center;
+				gap: 0.3rem;
+			}
+			.play-stats-popup .legend .dot {
+				width: 0.6rem;
+				height: 0.6rem;
+				border-radius: 50%;
+			}
+			.play-stats-popup .legend .time {
+				background: #76b7ff;
+			}
+			.play-stats-popup .legend .score {
+				background: #ffcc57;
+			}
+			.play-stats-popup .shape-filter {
+				display: flex;
+				flex-direction: column;
+				gap: 0.2rem;
+				font-size: 0.55rem;
+				letter-spacing: 0.3em;
+				text-transform: uppercase;
+				margin-bottom: 0;
+				margin-left: auto;
+			}
+			.play-stats-popup .shape-filter select {
+				padding: 0.35rem 0.6rem;
+				border-radius: 999px;
+				border: 1px solid rgba(0, 0, 0, 0.1);
+				background: rgba(255, 255, 255, 0.9);
+				color: inherit;
+				font: inherit;
+				text-transform: none;
+			}
+			body.theme-dark .play-stats-popup .shape-filter select {
+				background: rgba(20, 22, 30, 0.95);
+				border-color: rgba(255, 255, 255, 0.15);
+				color: #f8f8f8;
+			}
+			.play-stat {
+				display: flex;
+				flex-direction: column;
+				gap: 0.1rem;
+				font-weight: 600;
+			}
+			.play-stat strong {
+				font-size: 0.9rem;
+				font-weight: 700;
+			}
+			.play-perfect {
+				padding: 0.15rem 0.7rem;
+				border-radius: 999px;
+				border: 1px solid currentColor;
+				font-size: 0.55rem;
+				letter-spacing: 0.35em;
+				min-width: 130px;
+				display: inline-flex;
+				justify-content: center;
+				align-items: center;
+				text-transform: uppercase;
+			}
+			.play-perfect.hidden {
+				opacity: 0.35;
 			}
 			.info-panel {
 				position: absolute;
@@ -620,6 +826,14 @@
 		</style>
 	</head>
 	<body>
+		<script>
+			(() => {
+				const storedTheme = localStorage.getItem('kongming-theme');
+				if (storedTheme === 'dark' || storedTheme === 'light') {
+					document.body.classList.add(`theme-${storedTheme}`);
+				}
+				})();
+		</script>
 		<h1>Peg Solitaire</h1>
 		<div id="status"></div>
 		<div class="content-row">
@@ -668,9 +882,11 @@
 			</div>
 		</div>
 		<div class="board-actions" id="board-actions">
-			<button id="reset" type="button" aria-label="Reset the Peg Solitaire board">Reset Board</button>
-			<button id="shape" type="button" aria-label="Change board shape">Shape</button>
-			<button id="theme" type="button" aria-label="Switch theme">Theme</button>
+			<div class="board-buttons">
+				<button id="reset" type="button" aria-label="Reset the Peg Solitaire board">Reset</button>
+				<button id="shape" type="button" aria-label="Change board shape">Shape</button>
+				<button id="theme" type="button" aria-label="Switch theme">Theme</button>
+			</div>
 		</div>
 		<div class="bottom-controls hidden" id="helper-actions">
 			<button id="undo" type="button" aria-label="Undo last move">Undo</button>
@@ -681,15 +897,39 @@
 			<button id="auto-solve" type="button" aria-label="Auto-solve the puzzle">Solve</button>
 			<button id="auto-play" type="button" aria-label="Play the auto-solve plan">Play</button>
 		</div>
+		<div class="play-stats" id="play-stats">
+			<button id="play-timer-button" type="button" class="timer-trigger">
+				<span>Time</span>
+				<strong id="play-timer">00:00</strong>
+			</button>
+			<div class="play-stats-popup" id="play-stats-popup" aria-hidden="true">
+				<div class="popup-heading">Session history</div>
+				<div class="popup-controls">
+					<div class="legend">
+						<span><span class="dot time"></span>Time</span>
+						<span><span class="dot score"></span>Score</span>
+					</div>
+					<div class="shape-filter">
+						<label for="stats-shape-filter">Shape</label>
+						<select id="stats-shape-filter"></select>
+					</div>
+				</div>
+				<svg id="stats-graph" viewBox="0 0 320 160" aria-label="Play stats graph"></svg>
+				<div class="popup-footer">
+					<span id="play-stats-count">Games played: 0</span>
+					<button id="export-stats" type="button">Export to CSV</button>
+				</div>
+			</div>
+		</div>
 		<script type="module" src="./dist/main.js"></script>
 		<script>
 			if ('serviceWorker' in navigator) {
 				window.addEventListener('load', () => {
 					navigator.serviceWorker
-						.register('./sw.js', { scope: './' })
-						.catch(error => console.error('SW registration failed', error));
-				});
-			}
+					.register('./sw.js', { scope: './' })
+					.catch(error => console.error('SW registration failed', error));
+					});
+				}
 		</script>
 	</body>
 </html>

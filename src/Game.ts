@@ -7,6 +7,14 @@ import {
   SolverSessionProgress,
 } from './solver/IdaStarSolver';
 
+export type PlayLogEntry = {
+  timestamp: string;
+  durationMs: number;
+  pegsLeft: number;
+  perfect: boolean;
+  shapeId: string;
+};
+
 type PegLighting = {
   rotation: number;
   shadowX: number;
@@ -64,6 +72,17 @@ export class KongmingGame {
   private pegLightTargetY = 0;
   private pegSizePx = 0;
   private holeHitRadius = 0;
+  private playStatsEl: HTMLElement | null = null;
+  private playTimerEl: HTMLElement | null = null;
+  private playTimerId: number | null = null;
+  private playStartTime: number | null = null;
+  private playElapsedMs = 0;
+  private playResultLogged = false;
+  private highScoreActive = false;
+  private autoSolveUsed = false;
+  private readonly playLogKey = 'kongming-play-log';
+  private readonly bestPlayKey = 'kongming-play-best';
+  private bestPlayEntry: PlayLogEntry | null = null;
   constructor(
     boardEl: HTMLElement,
     statusEl: HTMLElement,
@@ -92,6 +111,7 @@ export class KongmingGame {
     this.history = [this.snapshotPegs()];
     this.selected = null;
     this.helperStateDirty = true;
+    this.resetPlayStats();
     this.render();
     this.setStatus(`Remove pegs until one remains at the ${this.currentShape.finalTargetDescription}.`);
   }
@@ -112,6 +132,13 @@ export class KongmingGame {
   public forceWinState(): void {
     this.solved = true;
     this.boardWrapper.classList.add('solved');
+  }
+
+  public setPlayStatsElements(statsEl: HTMLElement | null, timerEl: HTMLElement | null): void {
+    this.playStatsEl = statsEl;
+    this.playTimerEl = timerEl;
+    this.bestPlayEntry = this.loadBestPlayEntry();
+    this.updatePlayStatsDisplay();
   }
 
   private render(): void {
@@ -170,6 +197,7 @@ export class KongmingGame {
       }
     }
     this.updateWinState();
+    this.updatePlayStatsDisplay();
     if (this.pegs.size === 1) {
       const desc = this.currentShape.finalTargetDescription;
       this.setStatus(
@@ -184,6 +212,198 @@ export class KongmingGame {
 
   private setStatus(text: string): void {
     this.statusEl.textContent = text;
+  }
+
+  private setHighScoreHighlight(active: boolean): void {
+    this.highScoreActive = active;
+    if (this.playStatsEl) {
+      this.playStatsEl.classList.toggle('highscore', active);
+    }
+  }
+
+  private loadBestPlayEntry(): PlayLogEntry | null {
+    if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+      return null;
+    }
+    try {
+      const raw = window.localStorage.getItem(this.bestPlayKey);
+      if (!raw) return null;
+      const entry: PlayLogEntry = JSON.parse(raw);
+      if (
+        typeof entry.timestamp !== 'string' ||
+        typeof entry.durationMs !== 'number' ||
+        typeof entry.pegsLeft !== 'number' ||
+        typeof entry.perfect !== 'boolean' ||
+        typeof entry.shapeId !== 'string'
+      ) {
+        return null;
+      }
+      return entry;
+    } catch {
+      return null;
+    }
+  }
+
+  private saveBestPlayEntry(entry: PlayLogEntry): void {
+    if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(this.bestPlayKey, JSON.stringify(entry));
+    } catch {
+      // ignore storage failures
+    }
+  }
+
+  private resetPlayStats(): void {
+    this.stopPlayTimer();
+    this.playElapsedMs = 0;
+    this.playStartTime = null;
+    this.playResultLogged = false;
+    this.autoSolveUsed = false;
+    this.setHighScoreHighlight(false);
+    this.updatePlayStatsDisplay();
+  }
+
+  private startPlayTimer(): void {
+    if (this.playTimerId) {
+      window.clearInterval(this.playTimerId);
+    }
+    this.playElapsedMs = 0;
+    this.playStartTime = Date.now();
+    this.playTimerId = window.setInterval(() => this.updateTimerDisplay(), 500);
+    this.updateTimerDisplay();
+  }
+
+  private stopPlayTimer(): void {
+    if (this.playTimerId) {
+      window.clearInterval(this.playTimerId);
+      this.playTimerId = null;
+    }
+    if (this.playStartTime !== null) {
+      this.playElapsedMs = Date.now() - this.playStartTime;
+      this.playStartTime = null;
+    }
+    this.updateTimerDisplay();
+  }
+
+  private updateTimerDisplay(): void {
+    const duration = this.getElapsedMs();
+    this.playElapsedMs = duration;
+    if (this.playTimerEl) {
+      this.playTimerEl.textContent = this.formatDuration(duration);
+    }
+  }
+
+  private getElapsedMs(): number {
+    if (this.playStartTime !== null) {
+      return Date.now() - this.playStartTime;
+    }
+    return this.playElapsedMs;
+  }
+
+  private formatDuration(ms: number): string {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+
+  private updatePlayStatsDisplay(): void {
+    this.updateTimerDisplay();
+    const pegsLeft = this.pegs.size;
+    const perfect = pegsLeft === 1 && this.pegs.has(this.currentShape.empty);
+    const hasMoves = this.hasAvailableMoves();
+    if (pegsLeft !== 1 && !hasMoves && !this.playResultLogged && this.playStartTime !== null) {
+      this.stopPlayTimer();
+      this.logPlayResult(this.playElapsedMs, pegsLeft, false);
+      this.playResultLogged = true;
+      return;
+    }
+    if (pegsLeft === 1 && !this.playResultLogged && this.playStartTime !== null) {
+      this.stopPlayTimer();
+      this.logPlayResult(this.playElapsedMs, pegsLeft, perfect);
+      this.playResultLogged = true;
+    }
+  }
+
+  private hasAvailableMoves(): boolean {
+    for (const _ of this.validMoves()) {
+      return true;
+    }
+    return false;
+  }
+
+  private logPlayResult(durationMs: number, pegsLeft: number, perfect: boolean): void {
+    if (this.autoSolveUsed) {
+      return;
+    }
+    const entry: PlayLogEntry = {
+      timestamp: new Date().toISOString(),
+      durationMs,
+      pegsLeft,
+      perfect,
+      shapeId: this.currentShape.id,
+    };
+    const isHighScore = perfect && (!this.bestPlayEntry || durationMs < this.bestPlayEntry.durationMs);
+    this.setHighScoreHighlight(isHighScore);
+    if (isHighScore) {
+      this.bestPlayEntry = entry;
+      this.saveBestPlayEntry(entry);
+    }
+    this.appendLogEntry(entry);
+    if (typeof document !== 'undefined') {
+      document.dispatchEvent(new CustomEvent('playlog:updated'));
+    }
+  }
+
+  private appendLogEntry(entry: PlayLogEntry): void {
+    if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(this.playLogKey);
+      const entries: PlayLogEntry[] = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(entries)) {
+        throw new Error('Invalid log');
+      }
+      entries.push(entry);
+      const capped = entries.slice(-20);
+      window.localStorage.setItem(this.playLogKey, JSON.stringify(capped));
+    } catch {
+      // ignore storage failures
+    }
+  }
+
+  private loadPlayLogEntries(): PlayLogEntry[] {
+    if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+      return [];
+    }
+    try {
+      const raw = window.localStorage.getItem(this.playLogKey);
+      const entries: PlayLogEntry[] = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(entries)) {
+        return [];
+      }
+      return entries.filter(
+        entry =>
+          typeof entry.timestamp === 'string' &&
+          typeof entry.durationMs === 'number' &&
+          typeof entry.pegsLeft === 'number' &&
+          typeof entry.perfect === 'boolean' &&
+          typeof entry.shapeId === 'string',
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  public updateStatusMessage(text: string): void {
+    this.setStatus(text);
+  }
+
+  public getPlayLogEntries(): PlayLogEntry[] {
+    return this.loadPlayLogEntries();
   }
 
   private handleHoleClick(key: string, event: MouseEvent): void {
@@ -345,6 +565,9 @@ export class KongmingGame {
   private applyMove(from: string, to: string, jump: string): void {
     if (!this.autoplayActive) {
       this.clearSolverVisualization();
+    }
+    if (!this.playStartTime) {
+      this.startPlayTimer();
     }
     this.pegs.delete(from);
     this.pegs.delete(jump);
@@ -644,6 +867,7 @@ export class KongmingGame {
   }
 
   public async startAutoSolveVisualization(chunkMs = 50): Promise<SolverResult> {
+    this.autoSolveUsed = true;
     if (this.solverRunning && this.solverResult) {
       return this.solverResult;
     }
