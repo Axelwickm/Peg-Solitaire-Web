@@ -4,9 +4,17 @@ import { createMenuControls } from './menu/menuControls';
 import { shapes } from './shapes';
 import { initBuyView } from './buy/buyView';
 
+const isMainSite = Boolean(MAIN_SITE);
+
 const boardEl = document.getElementById('board');
 const statusEl = document.getElementById('status');
 const boardWrapper = document.querySelector('.board-wrapper');
+const buyMenuButton = document.querySelector<HTMLButtonElement>('.menu-item[data-menu="buy"]');
+const buyPanel = document.getElementById('buy-panel');
+if (!isMainSite) {
+  buyMenuButton?.remove();
+  buyPanel?.remove();
+}
 
 if (!boardEl || !statusEl || !boardWrapper) {
   throw new Error('Required DOM elements not found');
@@ -51,8 +59,7 @@ const helperActions = document.getElementById('helper-actions');
 const autoActions = document.getElementById('auto-actions');
 const autoSolveButton = document.getElementById('auto-solve') as HTMLButtonElement | null;
 const infoPanel = document.getElementById('info-panel');
-const buyView = initBuyView();
-const buyMenuButton = document.querySelector<HTMLButtonElement>('.menu-item[data-menu="buy"]');
+const buyView = isMainSite ? initBuyView() : { show: () => {}, hide: () => {} };
 const infoMenuButton = document.querySelector<HTMLButtonElement>('.menu-item[data-menu="info"]');
 const playMenuButton = document.querySelector<HTMLButtonElement>('.menu-item[data-menu="play"]');
 const boardMenuButton = document.querySelector<HTMLButtonElement>(
@@ -78,7 +85,7 @@ document.addEventListener('menu:activate', (event: Event) => {
   } else {
     infoPanel?.classList.remove('visible');
   }
-  if (menu === 'buy') {
+  if (menu === 'buy' && isMainSite) {
     buyView.show();
   } else {
     buyView.hide();
@@ -109,7 +116,10 @@ function updateActionVisibility(context?: {
   boardActions?.classList.toggle('disabled', disableBottomMenus);
   autoActions?.classList.toggle('disabled', disableBottomMenus);
   rightMenuPanel?.classList.toggle('disabled', disableBottomMenus);
-  (boardWrapper as HTMLElement | null)?.classList.toggle('buy-mode', activeLeftMenu === 'buy');
+  (boardWrapper as HTMLElement | null)?.classList.toggle(
+    'buy-mode',
+    isMainSite && activeLeftMenu === 'buy',
+  );
   const rightMenuChanged =
     context?.changedPanel === 'right' && context.previousRightMenu !== activeRightMenu;
   if (rightMenuChanged && activeRightMenu !== 'auto') {
@@ -122,7 +132,7 @@ function handleDirectMenuQuery(): void {
   const params = new URLSearchParams(window.location.search);
   const show = params.get('show');
   const menuButtons: Record<string, HTMLButtonElement | null> = {
-    buy: buyMenuButton,
+    buy: isMainSite ? buyMenuButton : null,
     info: infoMenuButton,
     play: playMenuButton,
     board: boardMenuButton,

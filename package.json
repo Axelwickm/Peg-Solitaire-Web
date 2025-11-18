@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist && esbuild src/main.ts --bundle --outfile=dist/main.js --minify --sourcemap && tsc --noEmit && cp index.html dist/index.html && cp -r static dist/static",
-    "start": "esbuild src/main.ts --bundle --outfile=main.js --sourcemap --serve=8000 --servedir=.",
+    "build": "MAIN_SITE=${MAIN_SITE:-false}; rm -rf dist && mkdir -p dist && esbuild src/main.ts --bundle --outfile=dist/main.js --minify --sourcemap --define:MAIN_SITE=${MAIN_SITE} && tsc --noEmit && cp index.html dist/index.html && cp -r static dist/static",
+    "start": "MAIN_SITE=${MAIN_SITE:-false}; esbuild src/main.ts --bundle --outfile=main.js --sourcemap --serve=8000 --servedir=. --define:MAIN_SITE=${MAIN_SITE}",
     "run": "npm run start"
   },
   "devDependencies": {
