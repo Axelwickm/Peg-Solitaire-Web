@@ -7,6 +7,13 @@ import {
   SolverSessionProgress,
 } from './solver/IdaStarSolver';
 
+type PegLighting = {
+  rotation: number;
+  shadowX: number;
+  shadowY: number;
+  shadowAngle: number;
+};
+
 export class KongmingGame {
   private boardEl: HTMLElement;
   private statusEl: HTMLElement;
@@ -53,6 +60,9 @@ export class KongmingGame {
   private autoplayTimer: number | null = null;
   private autoplayPlanVersion = 0;
   private autoplayKnownPlanVersion = 0;
+  private pegLightTargetX = 0; // set from css
+  private pegLightTargetY = 0;
+  private pegSizePx = 0;
   private holeHitRadius = 0;
   constructor(
     boardEl: HTMLElement,
@@ -115,10 +125,13 @@ export class KongmingGame {
     this.boardEl.innerHTML = '';
     this.holePositions.clear();
     const pegSize = this.calculatePegSize();
+    this.pegSizePx = pegSize;
     this.boardEl.style.setProperty('--peg-size', `${pegSize}px`);
     this.boardEl.style.setProperty('--hole-size', `${pegSize * 0.25}px`);
     this.holeHitRadius = Math.max(pegSize * 0.8, 24);
+    this.updatePegLightTarget();
     this.updatePickablePegs();
+    const targetHoles = this.selected ? this.getSelectableTargets(this.selected) : new Set<string>();
     for (let r = 0; r < this.currentShape.height; r++) {
       for (let c = 0; c < this.currentShape.width; c++) {
         const key = `${r},${c}`;
@@ -133,14 +146,16 @@ export class KongmingGame {
         hole.style.left = `${position.x * 100}%`;
         hole.style.top = `${position.y * 100}%`;
         hole.dataset.pos = key;
-        const orientation = this.calculatePegOrientation(position);
-        hole.style.setProperty('--peg-rotation', `${orientation.rotation.toFixed(2)}deg`);
-        hole.style.setProperty('--peg-shadow-x', `${orientation.shadowX.toFixed(2)}px`);
-        hole.style.setProperty('--peg-shadow-y', `${orientation.shadowY.toFixed(2)}px`);
+        const lighting = this.calculatePegLighting(position);
+        this.applyPegLightingStyles(hole, lighting);
         if (this.pegs.has(key)) {
           const peg = document.createElement('div');
           peg.className = 'peg';
           hole.appendChild(peg);
+          hole.classList.add('has-peg');
+        }
+        if (targetHoles.has(key)) {
+          hole.classList.add('target');
         }
         if (this.helperMode && this.helperBestMove) {
           if (key === this.helperBestMove.from) {
@@ -176,6 +191,11 @@ export class KongmingGame {
       event.preventDefault();
       return;
     }
+    if (this.pegs.has(key) && !this.pickablePegs.has(key)) {
+      this.logInvalidPick(key, 'click');
+      this.pulsePickableHints();
+      return;
+    }
     this.onHoleClick(key);
   }
 
@@ -199,6 +219,18 @@ export class KongmingGame {
     if (!jump) return null;
     if (!this.pegs.has(jump)) return null;
     return { jump };
+  }
+
+  private getSelectableTargets(from: string): Set<string> {
+    const targets = new Set<string>();
+    const moves = this.allowedMoves.get(from);
+    if (!moves) return targets;
+    for (const [to, jump] of moves.entries()) {
+      if (this.pegs.has(to)) continue;
+      if (!this.pegs.has(jump)) continue;
+      targets.add(to);
+    }
+    return targets;
   }
 
   private *validMoves(): Generator<{ from: string; to: string }> {
@@ -237,6 +269,10 @@ export class KongmingGame {
     this.pickupPulseTimeout = window.setTimeout(() => this.clearPickupPulse(), 500);
   }
 
+  private logInvalidPick(key: string, action: 'click' | 'drag'): void {
+    console.log(`Invalid pick attempt (${action}) for peg ${key}.`);
+  }
+
   private clearPickupPulse(): void {
     if (this.pickupPulseTimeout !== null) {
       window.clearTimeout(this.pickupPulseTimeout);
@@ -249,6 +285,7 @@ export class KongmingGame {
     if (!this.pegs.has(key)) return;
     this.stopAutoPlay();
     if (!this.pickablePegs.has(key)) {
+      this.logInvalidPick(key, 'drag');
       this.pulsePickableHints();
       return;
     }
@@ -442,6 +479,23 @@ export class KongmingGame {
     });
   }
 
+  private updatePegLightTarget(): void {
+    const styles = getComputedStyle(document.documentElement);
+    const parseOrDefault = (value: string, fallback: number): number => {
+      const parsed = parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    this.pegLightTargetX = parseOrDefault(styles.getPropertyValue('--peg-light-target-x'), 1);
+    this.pegLightTargetY = parseOrDefault(styles.getPropertyValue('--peg-light-target-y'), -1);
+  }
+
+  private getLightPosition(): { x: number; y: number } {
+    return {
+      x: this.pegLightTargetX,
+      y: this.pegLightTargetY
+    };
+  }
+
   private calculatePegSize(): number {
     const rect = this.boardEl.getBoundingClientRect();
     const fallbackWidth = parseFloat(getComputedStyle(this.boardEl).width) || 320;
@@ -496,24 +550,32 @@ export class KongmingGame {
     return count;
   }
 
-  private calculatePegOrientation(position: { x: number; y: number }): { rotation: number; shadowX: number; shadowY: number } {
-    const nx = position.x * 2 - 1;
-    const ny = position.y * 2 - 1;
-    const targetX = 1;
-    const targetY = -1;
-    const dx = targetX - nx;
-    const dy = targetY - ny;
+  private calculatePegLighting(pos: { x: number; y: number }): PegLighting {
+    const light = this.getLightPosition();
+    const dx = pos.x - light.x;
+    const dy = pos.y - light.y;
     const distance = Math.hypot(dx, dy) || 1;
-    const ndx = dx / distance;
-    const ndy = dy / distance;
-    const directionAngle = Math.atan2(dy, dx);
-    const axisAngle = Math.atan2(-1, 1);
-    const lightDistanceFactor = 3;
-    const rotation = ((directionAngle - axisAngle) * (180 / Math.PI)) / lightDistanceFactor;
-    const shadowDistance = 10 / lightDistanceFactor;
-    const shadowX = -ndx * shadowDistance;
-    const shadowY = -ndy * shadowDistance;
-    return { rotation, shadowX, shadowY };
+    const unitX = dx / distance;
+    const unitY = dy / distance;
+    let rotation = (Math.atan2(unitY, unitX) * 180) / Math.PI;
+    rotation = (rotation + 360) % 360;
+    rotation = (rotation + 180) % 360;
+    const shadowLength = Math.max(6, (this.pegSizePx || 40) * 0.18);
+    const shadowX = unitX * shadowLength;
+    const shadowY = unitY * shadowLength;
+    return {
+      rotation,
+      shadowX,
+      shadowY,
+      shadowAngle: rotation,
+    };
+  }
+
+  private applyPegLightingStyles(target: HTMLElement, lighting: PegLighting): void {
+    target.style.setProperty('--peg-rotation', `${lighting.rotation.toFixed(2)}deg`);
+    target.style.setProperty('--peg-shadow-x', `${lighting.shadowX.toFixed(2)}px`);
+    target.style.setProperty('--peg-shadow-y', `${lighting.shadowY.toFixed(2)}px`);
+    target.style.setProperty('--peg-shadow-angle', `${lighting.shadowAngle.toFixed(2)}deg`);
   }
 
   private getBoardRelativePosition(clientX: number, clientY: number): { x: number; y: number } | null {
@@ -527,10 +589,8 @@ export class KongmingGame {
 
   private applyGhostOrientation(position: { x: number; y: number }): void {
     if (!this.ghostPeg) return;
-    const orientation = this.calculatePegOrientation(position);
-    this.ghostPeg.style.setProperty('--peg-rotation', `${orientation.rotation.toFixed(2)}deg`);
-    this.ghostPeg.style.setProperty('--peg-shadow-x', `${orientation.shadowX.toFixed(2)}px`);
-    this.ghostPeg.style.setProperty('--peg-shadow-y', `${orientation.shadowY.toFixed(2)}px`);
+    const lighting = this.calculatePegLighting(position);
+    this.applyPegLightingStyles(this.ghostPeg, lighting);
   }
 
   private snapshotPegs(): string[] {
