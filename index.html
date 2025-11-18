@@ -41,6 +41,7 @@
 				--peg-light-target-x: 10;
 				--peg-light-target-y: -4;
 				--menu-line-color: #d0d2d7;
+				--hex-edge: 170px;
 			}
 			body {
 				margin: 0;
@@ -230,10 +231,15 @@
 			.menu-handle.dragging {
 				cursor: grabbing;
 			}
+			.menu-panel.right.disabled .menu-items,
+			.menu-panel.right.disabled .menu-items button {
+				opacity: 0.45;
+				filter: grayscale(0.35);
+			}
 			.board-wrapper {
 				position: relative;
 				padding: 26px;
-				border-radius: 22px;
+				border-radius: 15%;
 				border: none;
 				box-shadow: none;
 				overflow: visible;
@@ -324,7 +330,7 @@
 				width: clamp(260px, 34vw, 420px);
 				aspect-ratio: 1 / 1;
 				margin: 0 auto;
-				border-radius: 18px;
+				border-radius: 15%;
 				overflow: hidden;
 				background: transparent;
 				z-index: 1;
@@ -582,6 +588,12 @@
 			.auto-actions.hidden {
 				display: none;
 			}
+			.board-actions.disabled,
+			.auto-actions.disabled {
+				opacity: 0.45;
+				pointer-events: none;
+				filter: grayscale(0.35);
+			}
 			.play-stats {
 				position: fixed;
 				bottom: 1rem;
@@ -797,10 +809,11 @@
 				transform: scale(0.95);
 				transition: opacity 0.3s ease, transform 0.3s ease;
 				pointer-events: none;
-				font-size: 0.78rem;
-				line-height: 1.5;
+				font-size: 0.9rem;
+				line-height: 1.6;
 				color: #1e1e1e;
 				overflow: auto;
+				text-align: left;
 			}
 			body.theme-dark .info-panel {
 				background: rgba(22, 26, 34, 0.95);
@@ -811,6 +824,151 @@
 				opacity: 1;
 				transform: scale(1);
 				pointer-events: auto;
+			}
+			.buy-panel {
+				position: absolute;
+				inset: 8px;
+				z-index: 3;
+				display: grid;
+				grid-template-rows: auto 1fr;
+				gap: 0.35rem;
+				background: rgba(255, 255, 255, 0.96);
+				border-radius: 12px;
+				padding: 0.75rem 1rem 1rem;
+				box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+				opacity: 0;
+				transform: translateY(14px) scale(0.97);
+				transition: opacity 0.25s ease, transform 0.25s ease;
+				pointer-events: none;
+			}
+			body.theme-dark .buy-panel {
+				background: rgba(16, 18, 26, 0.94);
+				color: #f7f8ff;
+				box-shadow: 0 20px 55px rgba(0, 0, 0, 0.9);
+			}
+			.buy-panel.visible {
+				opacity: 1;
+				transform: none;
+				pointer-events: auto;
+			}
+			.buy-header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 1rem;
+				min-height: 0;
+			}
+			.buy-header h2 {
+				display: none;
+			}
+			.buy-tagline {
+				margin: 0;
+				display: none;
+			}
+			.buy-status {
+				font-size: 0.65rem;
+				letter-spacing: 0.22em;
+				text-transform: uppercase;
+				opacity: 0.65;
+				white-space: nowrap;
+			}
+			.buy-grid {
+				position: relative;
+				overflow: hidden;
+				border-radius: 12px;
+				border: 1px solid rgba(0, 0, 0, 0.08);
+				background: #ffffff;
+				min-height: 380px;
+				mask-image: linear-gradient(#000, #000);
+				touch-action: none;
+			}
+			body.theme-dark .buy-grid {
+				border-color: rgba(255, 255, 255, 0.1);
+				background: #ffffff;
+			}
+			.buy-track {
+				position: absolute;
+				top: 0;
+				left: 0;
+				will-change: transform;
+			}
+			.buy-card {
+				position: absolute;
+				width: calc(var(--hex-edge) * 2);
+				height: calc(var(--hex-edge) * 1.732);
+				display: block;
+				clip-path: none;
+				overflow: visible;
+				background: transparent;
+				border: none;
+				text-decoration: none;
+				color: inherit;
+				box-shadow: none;
+				transition: transform 0.15s ease;
+				cursor: grab;
+			}
+			.buy-card:hover,
+			.buy-card:focus-visible {
+				transform: translateY(-4px) scale(1.02);
+				outline: none;
+			}
+			body.theme-dark .buy-card {
+				background: transparent;
+				border: none;
+				box-shadow: none;
+			}
+			.buy-image {
+				position: absolute;
+				top: 8%;
+				left: 50%;
+				width: var(--hex-edge);
+				height: var(--hex-edge);
+				transform: translateX(-50%);
+				background-size: contain;
+				background-repeat: no-repeat;
+				background-position: center;
+				transition: transform 0.5s ease;
+			}
+			.buy-title {
+				position: absolute;
+				left: 0;
+				right: 0;
+				top: calc(0% + var(--hex-edge) - 12px);
+				bottom: 26px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 0.4rem 0.5rem 0.6rem;
+				font-weight: 400;
+				letter-spacing: 0.03em;
+				font-size: calc(0.82rem * var(--card-scale, 1));
+				color: #0f1116;
+				text-align: center;
+				max-width: calc(var(--hex-edge) * 1.2);
+				margin: 0 auto;
+				transition: opacity 0.15s ease;
+			}
+			.buy-card:hover .buy-image,
+			.buy-card:focus-visible .buy-image {
+				transform: translateX(-50%) scale(1.12);
+			}
+			.buy-message {
+				position: absolute;
+				inset: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				font-size: 0.85rem;
+				letter-spacing: 0.06em;
+				background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(250, 252, 255, 0.9));
+				color: rgba(30, 32, 40, 0.9);
+			}
+			body.theme-dark .buy-message {
+				background: linear-gradient(180deg, rgba(16, 18, 26, 0.9), rgba(12, 13, 19, 0.9));
+				color: rgba(237, 241, 255, 0.86);
+			}
+			.buy-message.hidden {
+				display: none;
 			}
 			.auto-actions.hidden {
 				display: none;
@@ -924,22 +1082,29 @@
 				<svg class="solver-overlay" aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
 				<div class="win-overlay" aria-hidden="true"></div>
 				<div id="info-panel" class="info-panel" aria-live="polite">
-					<h2>What is Peg Solitaire (Kongming Chess)?</h2>
+					<h2>What is Peg Solitaire?</h2>
 					<p>
-						Peg Solitaire (also known as Kongming Chess, Solo Noble, Solo Goli, Marble Solitaire, or simply Solitaire) is a one-player board puzzle that asks you to jump a peg over a neighboring peg into an empty hole and remove the jumped piece, gradually clearing the board until just one peg remains, ideally back in the center.
+						Peg Solitaire is a solo jump puzzle, also known as Kongming chess, Solo Noble, Solo Goli, Marble Solitaire, or simply Solitaire, where you hop one peg over a neighbor into an empty hole, remove the jumped peg, and keep going.
 					</p>
 					<p>
-						Start with every allowed hole filled except the center, select a peg, and jump it over an adjacent peg into an empty hole to remove the jumped peg. Repeat until only one peg remains. This build includes helper hints and an auto-solver to guide your best moves.
+						You start with every allowed hole filled except the center. Chain straight-line jumps until only one peg remains—ideally back in the middle. Helper hints and the auto-solver can steer you toward clean runs.
 					</p>
 					<p>
-						The first known mention of the game appears in 1697 at the court of Louis XIV, when the French magazine Mercure galant described the cross-shaped board, the rules, and sample problems, making that edition the earliest printed reference to the puzzle.
-					</p>
-					<p>
-						The standard setup fills every allowed hole except the center so every move removes exactly one peg, and the challenge is to keep jumping along straight paths until the board is empty save for a single survivor.
+						The first printed mention shows up in 1697 at Louis XIV's court, where Mercure galant outlined the cross board, rules, and sample drills.
 					</p>
 					<div class="info-links">
 						<a href="https://en.wikipedia.org/wiki/Peg_solitaire" target="_blank" rel="noreferrer">Read more on Wikipedia</a>
 						<a href="https://github.com/Axelwickm/Kongming-Chess-Web" target="_blank" rel="noreferrer">View this build on GitHub</a>
+					</div>
+				</div>
+				<div id="buy-panel" class="buy-panel" aria-live="polite">
+					<div class="buy-header">
+						<div></div>
+						<div class="buy-status" id="buy-status">Loading store…</div>
+					</div>
+					<div class="buy-grid" id="buy-grid">
+						<div class="buy-track" id="buy-track"></div>
+						<div class="buy-message" id="buy-message">Loading products…</div>
 					</div>
 				</div>
 			</div>

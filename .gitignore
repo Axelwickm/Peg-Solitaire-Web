@@ -2,6 +2,8 @@ node_modules/
 dist/
 deployment/
 venv/
+static/products/
+static/products.json
 .DS_Store
 *.log
 *.tsbuildinfo

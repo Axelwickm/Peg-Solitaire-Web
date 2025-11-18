@@ -2,6 +2,7 @@ import { KongmingGame } from './Game';
 import { initPlayStats } from './playStats';
 import { createMenuControls } from './menu/menuControls';
 import { shapes } from './shapes';
+import { initBuyView } from './buy/buyView';
 
 const boardEl = document.getElementById('board');
 const statusEl = document.getElementById('status');
@@ -50,30 +51,91 @@ const helperActions = document.getElementById('helper-actions');
 const autoActions = document.getElementById('auto-actions');
 const autoSolveButton = document.getElementById('auto-solve') as HTMLButtonElement | null;
 const infoPanel = document.getElementById('info-panel');
+const buyView = initBuyView();
+const buyMenuButton = document.querySelector<HTMLButtonElement>('.menu-item[data-menu="buy"]');
+const infoMenuButton = document.querySelector<HTMLButtonElement>('.menu-item[data-menu="info"]');
+const playMenuButton = document.querySelector<HTMLButtonElement>('.menu-item[data-menu="play"]');
+const boardMenuButton = document.querySelector<HTMLButtonElement>(
+  '.menu-panel.left .menu-item[data-menu="board"]',
+);
+const rightMenuPanel = document.querySelector<HTMLElement>('.menu-panel.right');
+let activeLeftMenu: string | null = 'board';
+let activeRightMenu: string | null = 'play';
+type PanelSide = 'left' | 'right';
 type MenuActivateEvent = CustomEvent<{ menu?: string }>;
 document.addEventListener('menu:activate', (event: Event) => {
   const menu = (event as MenuActivateEvent).detail.menu;
+  const panel = event.target as HTMLElement | null;
+  const isLeftPanel = panel?.classList.contains('left');
+  const previousRightMenu = activeRightMenu;
+  if (menu && isLeftPanel) {
+    activeLeftMenu = menu;
+  } else if (menu && panel?.classList.contains('right')) {
+    activeRightMenu = menu;
+  }
   if (menu === 'info') {
     infoPanel?.classList.add('visible');
   } else {
     infoPanel?.classList.remove('visible');
   }
-  updateActionVisibility(menu);
+  if (menu === 'buy') {
+    buyView.show();
+  } else {
+    buyView.hide();
+  }
+  const changedPanel: PanelSide | null = panel?.classList.contains('left')
+    ? 'left'
+    : panel?.classList.contains('right')
+    ? 'right'
+    : null;
+  updateActionVisibility({
+    changedPanel,
+    previousRightMenu,
+  });
 });
 document.addEventListener('solver:cleared', () => {
   resetAutoSolveState();
 });
-updateActionVisibility('play');
-function updateActionVisibility(menu?: string): void {
-  const showBoard = menu === 'play' || !menu;
-  boardActions?.classList.toggle('hidden', !showBoard);
-  helperActions?.classList.toggle('hidden', menu !== 'helper');
-  autoActions?.classList.toggle('hidden', menu !== 'auto');
-  if (menu !== 'auto') {
+updateActionVisibility();
+function updateActionVisibility(context?: {
+  changedPanel: PanelSide | null;
+  previousRightMenu?: string | null;
+}): void {
+  const boardInactive = activeRightMenu !== 'play';
+  boardActions?.classList.toggle('hidden', boardInactive);
+  helperActions?.classList.toggle('hidden', activeRightMenu !== 'helper');
+  autoActions?.classList.toggle('hidden', activeRightMenu !== 'auto');
+  const disableBottomMenus = activeLeftMenu !== 'board';
+  boardActions?.classList.toggle('disabled', disableBottomMenus);
+  autoActions?.classList.toggle('disabled', disableBottomMenus);
+  rightMenuPanel?.classList.toggle('disabled', disableBottomMenus);
+  (boardWrapper as HTMLElement | null)?.classList.toggle('buy-mode', activeLeftMenu === 'buy');
+  const rightMenuChanged =
+    context?.changedPanel === 'right' && context.previousRightMenu !== activeRightMenu;
+  if (rightMenuChanged && activeRightMenu !== 'auto') {
     game.clearSolverVisualization();
     resetAutoSolveState();
   }
 }
+
+function handleDirectMenuQuery(): void {
+  const params = new URLSearchParams(window.location.search);
+  const show = params.get('show');
+  const menuButtons: Record<string, HTMLButtonElement | null> = {
+    buy: buyMenuButton,
+    info: infoMenuButton,
+    play: playMenuButton,
+    board: boardMenuButton,
+  };
+  const targetButton = show ? menuButtons[show] : null;
+  if (!targetButton) return;
+  params.delete('show');
+  const search = params.toString();
+  const newUrl = `${window.location.pathname}${search ? `?${search}` : ''}${window.location.hash}`;
+  window.history.replaceState({}, document.title, newUrl);
+  targetButton.click();
+}
+handleDirectMenuQuery();
 
 const themes: Array<{ name: string; label: string; className: string }> = [
   { name: 'default', label: 'Theme', className: '' },
@@ -181,9 +243,6 @@ autoPlayButton?.addEventListener('click', () => {
   game.startAutoPlayPlan();
 });
 
-const boardMenuButton = document.querySelector<HTMLButtonElement>(
-  '.menu-panel.left .menu-item[data-menu="board"]',
-);
 const shapeButton = document.getElementById('shape');
 
 function cycleShape(): void {
