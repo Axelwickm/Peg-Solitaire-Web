@@ -3,7 +3,36 @@
 	<head>
 		<meta charset="UTF-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<title>Kongming Chess</title>
+		<title>Peg Solitaire</title>
+		<meta name="description" content="Play Peg Solitaire (Kongming Chess) online. Jump pegs to clear the board, explore cross and triangle layouts, and use helper hints or the auto-solver to master the puzzle.">
+		<meta property="og:type" content="website">
+		<meta property="og:title" content="Peg Solitaire (Kongming Chess) | Play Online">
+		<meta property="og:description" content="Free online Peg Solitaire with Kongming Chess roots. Solve the classic peg puzzle with helpers, hints, and an auto-solver on multiple board shapes.">
+		<meta property="og:image" content="https://axelwickm.github.io/Kongming-Chess-Web/board.webp">
+		<meta property="og:url" content="https://axelwickm.github.io/Kongming-Chess-Web/">
+		<meta name="twitter:card" content="summary_large_image">
+		<meta name="twitter:title" content="Peg Solitaire (Kongming Chess) | Play Online">
+		<meta name="twitter:description" content="Play the classic Peg Solitaire puzzle online with helpers, hints, and an auto-solver.">
+		<meta name="twitter:image" content="https://axelwickm.github.io/Kongming-Chess-Web/board.webp">
+		<link rel="canonical" href="https://axelwickm.github.io/Kongming-Chess-Web/">
+		<link rel="preload" href="board.webp" as="image" fetchpriority="high">
+		<link rel="preload" href="./dist/main.js" as="script">
+		<script type="application/ld+json">
+			{
+				"@context": "https://schema.org",
+				"@type": "WebApplication",
+				"name": "Peg Solitaire (Kongming Chess)",
+				"description": "Play Peg Solitaire (also known as Kongming Chess) online with helper hints, multiple board shapes, and an auto-solver.",
+				"url": "https://axelwickm.github.io/Kongming-Chess-Web/",
+				"applicationCategory": "Game",
+				"operatingSystem": "Web",
+				"image": "https://axelwickm.github.io/Kongming-Chess-Web/board.webp",
+				"author": {
+					"@type": "Person",
+					"name": "Axelwickm"
+				}
+			}
+		</script>
 		<style>
 			:root {
 				color-scheme: light dark;
@@ -591,7 +620,7 @@
 		</style>
 	</head>
 	<body>
-		<h1>Kongming Chess</h1>
+		<h1>Peg Solitaire</h1>
 		<div id="status"></div>
 		<div class="content-row">
 			<div class="menu-panel left">
@@ -605,23 +634,22 @@
 			</div>
 			<div class="board-wrapper">
 				<div class="board-background" aria-hidden="true"></div>
-				<div id="board"></div>
+				<div id="board" aria-label="Peg Solitaire board showing the standard cross layout"></div>
 				<svg class="solver-overlay" aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
 				<div class="win-overlay" aria-hidden="true"></div>
 				<div id="info-panel" class="info-panel" aria-live="polite">
+					<h2>What is Peg Solitaire (Kongming Chess)?</h2>
 					<p>
-						Kongming Chess (also known as Peg Solitaire, Solo Noble, Solo Goli, Marble Solitaire, or simply Solitaire)
-						is a one-player board puzzle that asks you to jump a peg over a neighboring peg into an empty hole and remove the
-						jumped piece, gradually clearing the board until just one peg remains, ideally back in the center.
+						Peg Solitaire (also known as Kongming Chess, Solo Noble, Solo Goli, Marble Solitaire, or simply Solitaire) is a one-player board puzzle that asks you to jump a peg over a neighboring peg into an empty hole and remove the jumped piece, gradually clearing the board until just one peg remains, ideally back in the center.
 					</p>
 					<p>
-						The first known mention of the game appears in 1697 at the court of Louis XIV, when the French magazine Mercure
-						galant described the cross-shaped board, the rules, and sample problems, making that edition the earliest printed
-						reference to the puzzle.
+						Start with every allowed hole filled except the center, select a peg, and jump it over an adjacent peg into an empty hole to remove the jumped peg. Repeat until only one peg remains. This build includes helper hints and an auto-solver to guide your best moves.
 					</p>
 					<p>
-						The standard setup fills every allowed hole except the center so every move removes exactly one peg, and the
-						challenge is to keep jumping along straight paths until the board is empty save for a single survivor.
+						The first known mention of the game appears in 1697 at the court of Louis XIV, when the French magazine Mercure galant described the cross-shaped board, the rules, and sample problems, making that edition the earliest printed reference to the puzzle.
+					</p>
+					<p>
+						The standard setup fills every allowed hole except the center so every move removes exactly one peg, and the challenge is to keep jumping along straight paths until the board is empty save for a single survivor.
 					</p>
 					<div class="info-links">
 						<a href="https://en.wikipedia.org/wiki/Peg_solitaire" target="_blank" rel="noreferrer">Read more on Wikipedia</a>
@@ -640,19 +668,28 @@
 			</div>
 		</div>
 		<div class="board-actions" id="board-actions">
-			<button id="reset" type="button">Reset Board</button>
-			<button id="shape" type="button">Shape</button>
-			<button id="theme" type="button">Theme</button>
+			<button id="reset" type="button" aria-label="Reset the Peg Solitaire board">Reset Board</button>
+			<button id="shape" type="button" aria-label="Change board shape">Shape</button>
+			<button id="theme" type="button" aria-label="Switch theme">Theme</button>
 		</div>
 		<div class="bottom-controls hidden" id="helper-actions">
-			<button id="undo" type="button">Undo</button>
-			<button id="hint" type="button">Hint best move</button>
-			<button id="helper-toggle" type="button">Helper (off)</button>
+			<button id="undo" type="button" aria-label="Undo last move">Undo</button>
+			<button id="hint" type="button" aria-label="Show hint for best move">Hint best move</button>
+			<button id="helper-toggle" type="button" aria-label="Toggle helper hints">Helper (off)</button>
 		</div>
 		<div class="auto-actions hidden" id="auto-actions">
-			<button id="auto-solve" type="button">Solve</button>
-			<button id="auto-play" type="button">Play</button>
+			<button id="auto-solve" type="button" aria-label="Auto-solve the puzzle">Solve</button>
+			<button id="auto-play" type="button" aria-label="Play the auto-solve plan">Play</button>
 		</div>
 		<script type="module" src="./dist/main.js"></script>
+		<script>
+			if ('serviceWorker' in navigator) {
+				window.addEventListener('load', () => {
+					navigator.serviceWorker
+						.register('./sw.js', { scope: './' })
+						.catch(error => console.error('SW registration failed', error));
+				});
+			}
+		</script>
 	</body>
 </html>
