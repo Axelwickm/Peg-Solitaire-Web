@@ -4,9 +4,9 @@ export class MenuControl {
   private handle: HTMLElement | null;
   private items: HTMLElement[];
   private menuPositions: number[] = [];
-  private handleY = 0;
-  private minHandleY = 0;
-  private maxHandleY = 0;
+  private handlePos = 0;
+  private minHandlePos = 0;
+  private maxHandlePos = 0;
   private velocity = 0;
   private dragging = false;
   private inertiaId: number | null = null;
@@ -17,7 +17,9 @@ export class MenuControl {
   private clickTargetIndex: number | null = null;
   private readonly moveHandler: (event: PointerEvent) => void;
   private readonly upHandler: () => void;
+  private readonly resizeHandler: () => void;
   private lastHighlightIndex = -1;
+  private orientation: 'vertical' | 'horizontal' = 'vertical';
 
   constructor(panel: Element) {
     this.panel = panel as HTMLElement;
@@ -26,7 +28,9 @@ export class MenuControl {
     this.items = Array.from(this.panel.querySelectorAll('.menu-item'));
     this.moveHandler = e => this.moveHandle(e);
     this.upHandler = () => this.endDrag();
+    this.resizeHandler = () => this.updateGeometry();
     this.handle?.addEventListener('pointerdown', e => this.startDrag(e));
+    window.addEventListener('resize', this.resizeHandler);
     this.targetIndex = 0;
     this.items.forEach((item, index) => {
       item.addEventListener('click', e => {
@@ -45,22 +49,49 @@ export class MenuControl {
   public updateGeometry(): void {
     if (!this.panel || !this.line) return;
     const panelRect = this.panel.getBoundingClientRect();
-    this.menuPositions = this.items.map(item => {
-      const rect = item.getBoundingClientRect();
-      return rect.top + rect.height / 2 - panelRect.top;
-    });
-    this.minHandleY = this.line.offsetTop;
-    this.maxHandleY = this.line.offsetTop + this.line.offsetHeight;
-    if (!this.handleY) {
-      this.handleY = this.menuPositions[0] ?? (this.minHandleY + this.maxHandleY) / 2;
+    const lineRect = this.line.getBoundingClientRect();
+    this.orientation = lineRect.height >= lineRect.width ? 'vertical' : 'horizontal';
+    const rawLineLength = this.orientation === 'vertical' ? lineRect.height : lineRect.width;
+    const fallbackLineLength =
+      this.orientation === 'vertical' ? this.line.offsetHeight : this.line.offsetWidth;
+    const resolvedLineLength = rawLineLength || fallbackLineLength || 1;
+    const lineStart =
+      this.orientation === 'vertical'
+        ? lineRect.top - panelRect.top
+        : lineRect.left - panelRect.left;
+    const lineEnd = lineStart + resolvedLineLength;
+    if (!this.items.length) {
+      this.menuPositions = [];
+      return;
     }
-    this.setHandlePosition(this.handleY);
+    if (this.items.length === 1) {
+      this.menuPositions = [lineStart + resolvedLineLength / 2];
+    } else {
+      const step = resolvedLineLength / (this.items.length - 1);
+      this.menuPositions = this.items.map((_, index) => lineStart + step * index);
+    }
+    this.minHandlePos = lineStart;
+    this.maxHandlePos = lineEnd;
+    if (
+      !this.handlePos ||
+      this.handlePos < this.minHandlePos ||
+      this.handlePos > this.maxHandlePos
+    ) {
+      this.handlePos = this.menuPositions[0] ?? (this.minHandlePos + this.maxHandlePos) / 2;
+    }
+    this.setHandlePosition(this.handlePos);
   }
 
-  private setHandlePosition(y: number): void {
+  private setHandlePosition(pos: number): void {
     if (!this.handle) return;
-    this.handleY = Math.max(this.minHandleY, Math.min(this.maxHandleY, y));
-    this.handle.style.top = `${this.handleY}px`;
+    this.handlePos = Math.max(this.minHandlePos, Math.min(this.maxHandlePos, pos));
+    if (this.orientation === 'vertical') {
+      this.handle.style.top = `${this.handlePos}px`;
+      this.handle.style.left = '';
+    } else {
+      this.handle.style.left = `${this.handlePos}px`;
+      this.handle.style.top = '';
+    }
     this.updateActiveMenu();
   }
 
@@ -69,7 +100,7 @@ export class MenuControl {
     let nearestIndex = 0;
     let nearestDist = Infinity;
     this.menuPositions.forEach((pos, index) => {
-      const dist = Math.abs(this.handleY - pos);
+      const dist = Math.abs(this.handlePos - pos);
       if (dist < nearestDist) {
         nearestDist = dist;
         nearestIndex = index;
@@ -109,16 +140,19 @@ export class MenuControl {
 
   private moveHandle(event: PointerEvent): void {
     if (!this.dragging || !this.panel) return;
-    const panelTop = this.panel.getBoundingClientRect().top;
-    const targetY = event.clientY - panelTop;
+    const panelRect = this.panel.getBoundingClientRect();
+    const targetPos =
+      this.orientation === 'vertical'
+        ? event.clientY - panelRect.top
+        : event.clientX - panelRect.left;
     const now = event.timeStamp || performance.now();
     const dt = Math.max((now - this.lastPointerTime) / 1000, 1 / 120);
-    this.velocity = (targetY - this.handleY) / dt;
+    this.velocity = (targetPos - this.handlePos) / dt;
     this.lastPointerTime = now;
-    this.setHandlePosition(targetY);
+    this.setHandlePosition(targetPos);
     if (this.targetIndex !== null && this.clickTargetIndex === null) {
-      const pos = this.menuPositions[this.targetIndex] ?? this.handleY;
-      if (Math.abs(this.handleY - pos) > 20) {
+      const pos = this.menuPositions[this.targetIndex] ?? this.handlePos;
+      if (Math.abs(this.handlePos - pos) > 20) {
         this.targetIndex = null;
       }
     }
@@ -152,31 +186,31 @@ export class MenuControl {
     }
     const dt = (timestamp - this.lastFrameTime) / 1000;
     this.lastFrameTime = timestamp;
-    this.handleY += this.velocity * dt;
-    if (this.handleY < this.minHandleY) {
-      this.handleY = this.minHandleY;
+    this.handlePos += this.velocity * dt;
+    if (this.handlePos < this.minHandlePos) {
+      this.handlePos = this.minHandlePos;
       this.velocity *= -0.3;
-    } else if (this.handleY > this.maxHandleY) {
-      this.handleY = this.maxHandleY;
+    } else if (this.handlePos > this.maxHandlePos) {
+      this.handlePos = this.maxHandlePos;
       this.velocity *= -0.3;
     }
-    this.setHandlePosition(this.handleY);
-    const dist = Math.abs(this.handleY - (this.menuPositions[this.activeIndex] ?? this.handleY));
+    this.setHandlePosition(this.handlePos);
+    const dist = Math.abs(this.handlePos - (this.menuPositions[this.activeIndex] ?? this.handlePos));
     if (
       this.targetIndex !== null &&
       this.clickTargetIndex === null &&
-      Math.abs(this.handleY - (this.menuPositions[this.targetIndex] ?? this.handleY)) > 30
+      Math.abs(this.handlePos - (this.menuPositions[this.targetIndex] ?? this.handlePos)) > 30
     ) {
       this.targetIndex = null;
       this.clickTargetIndex = null;
     }
     this.velocity *= Math.pow(0.92, dt * 60);
     const attractIndex = this.targetIndex ?? this.activeIndex;
-    const attractTarget = this.menuPositions[attractIndex] ?? this.handleY;
+    const attractTarget = this.menuPositions[attractIndex] ?? this.handlePos;
     const attractionStrength = 4;
-    const distToTarget = Math.abs(this.handleY - attractTarget);
+    const distToTarget = Math.abs(this.handlePos - attractTarget);
     const magnetFactor = 1 + distToTarget / 15;
-    this.velocity += (attractTarget - this.handleY) * attractionStrength * magnetFactor * dt;
+    this.velocity += (attractTarget - this.handlePos) * attractionStrength * magnetFactor * dt;
     if (distToTarget < 4 && attractIndex === this.activeIndex) {
       this.velocity = 0;
       this.setHandlePosition(attractTarget);

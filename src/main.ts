@@ -79,6 +79,10 @@ document.addEventListener('menu:activate', (event: Event) => {
     activeLeftMenu = menu;
   } else if (menu && panel?.classList.contains('right')) {
     activeRightMenu = menu;
+    if (menu !== 'play' && activeLeftMenu !== 'board') {
+      // Ensure board tools stay available when using non-play right panels.
+      boardMenuButton?.click();
+    }
   }
   if (menu === 'info') {
     infoPanel?.classList.add('visible');
@@ -112,10 +116,6 @@ function updateActionVisibility(context?: {
   boardActions?.classList.toggle('hidden', boardInactive);
   helperActions?.classList.toggle('hidden', activeRightMenu !== 'helper');
   autoActions?.classList.toggle('hidden', activeRightMenu !== 'auto');
-  const disableBottomMenus = activeLeftMenu !== 'board';
-  boardActions?.classList.toggle('disabled', disableBottomMenus);
-  autoActions?.classList.toggle('disabled', disableBottomMenus);
-  rightMenuPanel?.classList.toggle('disabled', disableBottomMenus);
   (boardWrapper as HTMLElement | null)?.classList.toggle(
     'buy-mode',
     isMainSite && activeLeftMenu === 'buy',
@@ -270,5 +270,33 @@ function cycleShape(): void {
   game.updateStatusMessage(`Shape: ${nextShape.name}`);
 }
 
-boardMenuButton?.addEventListener('click', cycleShape);
+let suppressBoardCycle = false;
+const handleBoardMenuClick = (): void => {
+  if (suppressBoardCycle) return;
+  cycleShape();
+};
+boardMenuButton?.addEventListener('click', handleBoardMenuClick);
 shapeButton?.addEventListener('click', cycleShape);
+
+function forceBoardMode(): void {
+  if (activeLeftMenu === 'board') return;
+  suppressBoardCycle = true;
+  boardMenuButton?.click();
+  suppressBoardCycle = false;
+}
+
+const attachBoardModeGuard = (element: HTMLElement | null) => {
+  if (!element) return;
+  element.addEventListener('pointerdown', event => {
+    if ((event.target as HTMLElement)?.id === 'theme') return;
+    forceBoardMode();
+  });
+  element.addEventListener('click', event => {
+    if ((event.target as HTMLElement)?.id === 'theme') return;
+    forceBoardMode();
+  });
+};
+
+attachBoardModeGuard(boardActions);
+attachBoardModeGuard(helperActions);
+attachBoardModeGuard(autoActions);

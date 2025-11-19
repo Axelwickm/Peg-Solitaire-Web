@@ -30,7 +30,7 @@
 				"image": "https://axelwickm.github.io/Kongming-Chess-Web/board.webp",
 				"author": {
 					"@type": "Person",
-					"name": "Axelwickm"
+					"name": "Axel Wickman"
 				}
 			}
 		</script>
@@ -42,6 +42,20 @@
 				--peg-light-target-y: -4;
 				--menu-line-color: #d0d2d7;
 				--hex-edge: clamp(100px, 5vw, 120px);
+				--page-bg-from: #fefefe;
+				--page-bg-to: #e9edf0;
+				--text-color: #1b1b1f;
+				--board-radial-from: rgba(163, 97, 22, 0.9);
+				--board-radial-to: rgba(90, 47, 22, 0.95);
+				--board-bg-color: #5a2f16;
+				--board-font-color: #1b1b1f;
+				--solved-border: #0b0b0b;
+				--solved-badge-bg: rgba(0, 0, 0, 0.85);
+				--solved-badge-color: #fff;
+				--drop-circle-color: rgba(255, 255, 255, 0.85);
+				--pickup-pulse-color: rgba(255, 255, 255, 0.9);
+				--board-size: clamp(210px, 75vw, 420px);
+				--peg-size: clamp(20px, 7.0vw, 33px);
 			}
 			body {
 				margin: 0;
@@ -55,21 +69,6 @@
 				color: var(--text-color);
 				transition: background-color 0.4s ease, color 0.4s ease, background 0.4s ease;
 				text-align: center;
-			}
-			:root {
-				--page-bg-from: #fefefe;
-				--page-bg-to: #e9edf0;
-				--text-color: #1b1b1f;
-				--board-radial-from: rgba(163, 97, 22, 0.9);
-				--board-radial-to: rgba(90, 47, 22, 0.95);
-				--board-bg-color: #5a2f16;
-				--board-font-color: #1b1b1f;
-				--solved-border: #0b0b0b;
-				--solved-badge-bg: rgba(0, 0, 0, 0.85);
-				--solved-badge-color: #fff;
-				--drop-circle-color: rgba(255, 255, 255, 0.85);
-				--pickup-pulse-color: rgba(255, 255, 255, 0.9);
-				--peg-size: clamp(30px, 4vw, 42px);
 			}
 			body.theme-light {
 				--page-bg-from: #ffffff;
@@ -328,7 +327,7 @@
 			}
 			#board {
 				position: relative;
-				width: clamp(260px, 34vw, 420px);
+				width: var(--board-size);
 				aspect-ratio: 1 / 1;
 				margin: 0 auto;
 				border-radius: 15%;
@@ -547,7 +546,7 @@
 				min-height: 1.5rem;
 				width: 100%;
 				text-align: center;
-				margin-bottom: 50px;
+				margin-bottom: 20px;
 			}
 			.board-actions,
 			.bottom-controls,
@@ -799,6 +798,9 @@
 			.play-perfect.hidden {
 				opacity: 0.35;
 			}
+			.panel-rounded {
+				border-radius: 15%;
+			}
 			.info-panel {
 				position: absolute;
 				inset: 8px;
@@ -821,6 +823,10 @@
 				background: rgba(22, 26, 34, 0.95);
 				color: #fff;
 				box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85);
+				border-radius: 15%;
+			}
+			body.theme-light .info-panel {
+				border-radius: 15%;
 			}
 			.info-panel.visible {
 				opacity: 1;
@@ -847,6 +853,10 @@
 				background: rgba(16, 18, 26, 0.94);
 				color: #f7f8ff;
 				box-shadow: 0 20px 55px rgba(0, 0, 0, 0.9);
+				border-radius: 15%;
+			}
+			body.theme-light .buy-panel {
+				border-radius: 15%;
 			}
 			.buy-panel.visible {
 				opacity: 1;
@@ -886,6 +896,10 @@
 			body.theme-dark .buy-grid {
 				border-color: rgba(255, 255, 255, 0.1);
 				background: #ffffff;
+				border-radius: 15%;
+			}
+			body.theme-light .buy-grid {
+				border-radius: 15%;
 			}
 			.buy-track {
 				position: absolute;
@@ -997,62 +1011,121 @@
 				box-shadow: 0 10px 22px rgba(0, 0, 0, 0.7);
 			}
 			@media (max-width: 600px) {
-				.menu-panel .menu-items {
+				.content-row {
+					flex-direction: column;
+					align-items: center;
+					gap: 0.75rem;
+				}
+				.menu-panel {
+					width: min(340px, 90vw);
+					height: 80px;
+					padding: 0;
+					flex-direction: column;
+					align-items: center;
+					justify-content: center;
+				}
+				.menu-panel.left {
+					order: 0;
+					margin-bottom: 0.25rem;
+					margin-top: -0.25rem;
+				}
+				.board-wrapper {
+					order: 1;
+				}
+				.menu-panel.right {
+					order: 2;
+					margin-top: -0.1rem;
+				}
+				.menu-panel.right {
+					align-items: center;
+				}
+				.menu-panel.right .menu-label {
+					order: 2;
+					margin-top: 0.25rem;
+					align-self: center;
+				}
+				.menu-panel.right .menu-line {
+					order: 1;
+					margin-bottom: 0.25rem;
+				}
+				.menu-panel.right .menu-handle {
+					order: 1;
+				}
+				.menu-panel .menu-line {
+					top: 50%;
+					bottom: auto;
+					left: 28px;
+					right: 28px;
+					width: auto;
+					height: 4px;
+					transform: translateY(-50%);
+					background: var(--menu-line-color);
+				}
+				.menu-panel.left .menu-line,
+				.menu-panel.right .menu-line {
+					left: 32px;
+					right: 32px;
+				}
+				.menu-panel .menu-line::before,
+				.menu-panel .menu-line::after {
+					content: '';
 					position: absolute;
 					top: 50%;
-					left: 50%;
+					width: 10px;
+					height: 2px;
+					background: rgba(0, 0, 0, 0.35);
+					transform: translateY(-50%);
+				}
+				.menu-panel .menu-line::before {
+					left: 0;
+				}
+				.menu-panel .menu-line::after {
+					right: 0;
+				}
+				body.theme-dark .menu-panel .menu-line::before,
+				body.theme-dark .menu-panel .menu-line::after {
+					background: rgba(255, 255, 255, 0.45);
+				}
+				.menu-panel .menu-handle {
+					top: 50%;
+					bottom: auto;
+					left: 32px;
 					transform: translate(-50%, -50%);
-					width: 100%;
-					align-items: center;
-					text-align: center;
 				}
-				.menu-panel.left .menu-items,
-				.menu-panel.right .menu-items {
-					margin: 0;
-				}
-				.menu-panel.left .menu-items {
-					right: 2px;
-				}
-				.menu-panel.right .menu-items {
-					left: 2px;
+				.menu-panel.left .menu-handle,
+				.menu-panel.right .menu-handle {
+					left: 32px;
+					right: auto;
+					transform: translate(-50%, -50%);
 				}
 				.menu-panel .menu-items {
-					flex-direction: column;
-					gap: 0.65rem;
+					position: static;
+					transform: none;
+					width: auto;
+					margin: 0;
+					flex-direction: row;
+					gap: 0;
+					opacity: 0;
+					pointer-events: none;
 				}
 				.menu-panel .menu-items button {
-					/* Menu line, disabled */
 					display: none;
-					width: 12px;
-					height: 3px;
-					padding: 0;
-					background: var(--menu-line-color);
-					border-radius: 999px;
-					color: transparent;
-					text-indent: -9999px;
 				}
 				.menu-label {
-					position: absolute;
+					position: static;
 					display: block;
-					position: absolute;
-					top: -40px;
 					padding: 0.25rem 0.75rem;
 					border-radius: 999px;
 					font-size: 0.65rem;
 					letter-spacing: 0.25em;
 					text-transform: uppercase;
-					white-space: nowrap;
 					background: rgba(255, 255, 255, 0.9);
 					color: inherit;
-					z-index: 6;
-				}
-				.menu-panel.left .menu-label {
-					right: 2px;
-					transform: translateX(50%);
+					margin-bottom: 0.25rem;
+					transform: none;
 				}
 				.menu-panel.right .menu-label {
-					left: 2px;
-					transform: translateX(-50%);
+					margin-bottom: 0.25rem;
 				}
 			}
 		</style>
@@ -1084,7 +1157,7 @@
 				<div id="board" aria-label="Peg Solitaire board showing the standard cross layout"></div>
 				<svg class="solver-overlay" aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
 				<div class="win-overlay" aria-hidden="true"></div>
-				<div id="info-panel" class="info-panel" aria-live="polite">
+				<div id="info-panel" class="info-panel panel-rounded" aria-live="polite">
 					<h2>What is Peg Solitaire?</h2>
 					<p>
 						Peg Solitaire is a solo jump puzzle, also known as Kongming chess, Solo Noble, Solo Goli, Marble Solitaire, or simply Solitaire, where you hop one peg over a neighbor into an empty hole, remove the jumped peg, and keep going.
@@ -1100,7 +1173,7 @@
 						<a href="https://github.com/Axelwickm/Kongming-Chess-Web" target="_blank" rel="noreferrer">View this build on GitHub</a>
 					</div>
 				</div>
-				<div id="buy-panel" class="buy-panel" aria-live="polite">
+				<div id="buy-panel" class="buy-panel panel-rounded" aria-live="polite">
 					<div class="buy-header">
 						<div></div>
 						<div class="buy-status" id="buy-status">Loading store…</div>
