@@ -269,15 +269,13 @@
 				radial-gradient(circle at calc(50% + var(--light-x) * 25px) calc(45% - var(--light-y) * 15px), var(--board-radial-from), var(--board-radial-to));
 				background-blend-mode: normal;
 				border: 1px solid rgba(0, 0, 0, 0.35);
-				box-shadow:
-				0 14px 30px rgba(0, 0, 0, 0.3),
-				calc(var(--light-x) * 34px) calc(var(--light-y) * 28px) 45px rgba(255, 255, 255, 0.45),
-				calc(var(--light-x) * -22px) calc(var(--light-y) * -18px) 38px rgba(8, 5, 2, 0.45);
 			}
 			body.theme-dark .board-wrapper {
-				box-shadow: 0 0 35px rgba(0, 0, 0, 0.9),
-				calc(var(--light-x) * 34px) calc(var(--light-y) * 28px) 45px rgba(255, 255, 255, 0.45),
-				calc(var(--light-x) * -22px) calc(var(--light-y) * -18px) 38px rgba(8, 5, 2, 0.45);
+				box-shadow: 0 0 60px rgba(0, 0, 0, 0.9), 0px 0px 20px rgba(255, 255, 255, 0.45), 0px 0px 39px rgba(15, 5, 2, .99);
+				transform: none;
+			}
+			body.theme-light .board-wrapper {
+				box-shadow: 4px 0 12px rgba(0, 0, 0, 0.4), 0px 0px 10px rgba(255, 255, 255, 0.1);
 				transform: none;
 			}
 			.board-wrapper .win-overlay {
