@@ -151,12 +151,13 @@ const themes: Array<{ name: string; label: string; className: string }> = [
   { name: 'default', label: 'Theme', className: '' },
   { name: 'light', label: 'Light', className: 'theme-light' },
   { name: 'dark', label: 'Dark', className: 'theme-dark' },
+  { name: 'rose', label: 'Rose Quartz', className: 'theme-rose' },
 ];
 let themeIndex = 0;
 
 function applyTheme(index: number, announce = false): void {
   themeIndex = (index + themes.length) % themes.length;
-  document.body.classList.remove('theme-light', 'theme-dark');
+  document.body.classList.remove('theme-light', 'theme-dark', 'theme-rose');
   const theme = themes[themeIndex];
   if (theme.className) {
     document.body.classList.add(theme.className);
