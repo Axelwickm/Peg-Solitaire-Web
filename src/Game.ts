@@ -8,6 +8,9 @@ import {
   SolverOptions,
 } from './solver/BfidaSolver';
 
+const SOLVER_STALL_TIMEOUT_MS = 120000;
+const SOLVER_PERFECT_EXTRA_MS = 1000;
+
 export type PlayLogEntry = {
   timestamp: string;
   durationMs: number;
@@ -66,6 +69,7 @@ export class KongmingGame {
   private solverLastImprovementTime = 0;
   private solverBestMovesLength = 0;
   private solverInitialPegCount = 0;
+  private solverPerfectDetectedAt: number | null = null;
   private autoplayActive = false;
   private autoplayMoves: SolverMove[] = [];
   private autoplayIndex = 0;
@@ -900,6 +904,7 @@ export class KongmingGame {
     this.solverInitialPegCount = this.pegs.size;
     this.solverBestMovesLength = 0;
     this.solverLastImprovementTime = performance.now();
+    this.solverPerfectDetectedAt = null;
     this.boardWrapper.classList.add('solver-busy');
     const promise = new Promise<SolverResult>(resolve => {
       this.solverPromiseResolve = resolve;
@@ -910,7 +915,18 @@ export class KongmingGame {
         this.recordSolverImprovement(progress);
         const stalled =
           this.solverBestMovesLength > 0 &&
-          performance.now() - this.solverLastImprovementTime > 10000;
+          performance.now() - this.solverLastImprovementTime > SOLVER_STALL_TIMEOUT_MS;
+        const bestLeftNow = this.getBestPegsLeft();
+        let shouldStopForPerfect = false;
+        if (bestLeftNow === 1) {
+          if (!this.solverPerfectDetectedAt) {
+            this.solverPerfectDetectedAt = performance.now();
+          } else if (performance.now() - this.solverPerfectDetectedAt > SOLVER_PERFECT_EXTRA_MS) {
+            shouldStopForPerfect = true;
+          }
+        } else {
+          this.solverPerfectDetectedAt = null;
+        }
         console.log('[UI] Solver chunk', {
           done: progress.done,
           solved: progress.solved,
@@ -929,6 +945,11 @@ export class KongmingGame {
           this.finishSolverRun(progress, resolve, 'completed');
           return;
         }
+        if (shouldStopForPerfect) {
+          console.log('[UI] Perfect solution reached; finishing after grace period');
+          this.finishSolverRun(progress, resolve, 'perfect');
+          return;
+        }
         if (stalled) {
           console.log('[UI] Solver stalled, returning best-so-far solution');
           this.finishSolverRun(progress, resolve, 'stalled');
@@ -942,20 +963,20 @@ export class KongmingGame {
   }
 
   private recordSolverImprovement(progress: SolverSessionProgress): void {
-    const bestLength = progress.bestMoves.length;
-    const improved =
-      bestLength > 0 &&
-      (this.solverBestMovesLength === 0 || bestLength < this.solverBestMovesLength);
+    const solutionLength = progress.bestMoves.length;
+    const previewLength = progress.currentPath.length;
+    const latestBest = Math.max(solutionLength, previewLength);
+    const improved = latestBest > this.solverBestMovesLength;
     if (improved) {
-      this.solverBestMovesLength = bestLength;
+      this.solverBestMovesLength = latestBest;
       this.solverLastImprovementTime = performance.now();
     }
   }
 
   private getBestPegsLeft(): number | null {
     if (!this.solverInitialPegCount) return null;
-    if (!this.solverBestMovesLength) return null;
-    const pegsLeft = Math.max(1, this.solverInitialPegCount - this.solverBestMovesLength);
+    const movesUsed = this.solverBestMovesLength ?? 0;
+    const pegsLeft = Math.max(1, this.solverInitialPegCount - movesUsed);
     return pegsLeft;
   }
 
@@ -964,22 +985,27 @@ export class KongmingGame {
     if (bestLeft === null) {
       return '';
     }
-    return ` · Best: ${bestLeft} peg${bestLeft === 1 ? '' : 's'} left (${this.solverBestMovesLength} move${this.solverBestMovesLength === 1 ? '' : 's'
-      })`;
+    return ` · Best: ${bestLeft} peg${bestLeft === 1 ? '' : 's'} left (${this.solverBestMovesLength} move${this.solverBestMovesLength === 1 ? '' : 's'})`;
   }
 
   private finishSolverRun(
     progress: SolverSessionProgress,
     resolve: (result: SolverResult) => void,
-    reason: 'completed' | 'stalled',
+    reason: 'completed' | 'stalled' | 'perfect',
   ): void {
-    const solved = reason === 'completed' && progress.solved;
+    const solved = reason === 'perfect' ? true : reason === 'completed' && progress.solved;
     this.solverRunning = false;
     this.boardWrapper.classList.remove('solver-busy');
+    this.solverPerfectDetectedAt = null;
+    const chosenPath = progress.bestMoves.length ? progress.bestMoves : progress.currentPath;
+    const bestPath = [...chosenPath];
+    if (bestPath.length > this.solverBestMovesLength) {
+      this.solverBestMovesLength = bestPath.length;
+    }
     const result: SolverResult = {
       solved,
-      moves: progress.bestMoves,
-      bestMoves: progress.bestMoves,
+      moves: bestPath,
+      bestMoves: bestPath,
       nodesExplored: progress.nodesExplored,
       durationMs: Math.max(0, performance.now() - this.solverStartTime),
     };
@@ -990,25 +1016,21 @@ export class KongmingGame {
       this.autoplayMoves = [...result.bestMoves];
       this.autoplayIndex = 0;
     }
-    if (result.solved) {
-      this.autoplayPlanVersion += 1;
-      this.autoplayKnownPlanVersion = this.autoplayPlanVersion;
-      this.autoplayMoves = [...result.moves];
-      this.autoplayIndex = 0;
-    }
     this.solverSession = null;
     if (this.solverTimer !== null) {
       window.clearTimeout(this.solverTimer);
       this.solverTimer = null;
     }
     this.solverPromiseResolve = null;
-    this.updateSolverLines(progress.bestMoves, result.solved ? 'lime' : 'red');
+    this.updateSolverLines(bestPath, result.solved ? 'lime' : 'red');
     console.log('[UI] Solver finished', { ...result, reason });
     let status: string;
-    if (result.solved) {
+    if (reason === 'perfect') {
+      status = `Perfect solution found · ${result.nodesExplored} nodes explored`;
+    } else if (result.solved) {
       status = `Solved in ${result.durationMs.toFixed(1)}ms · ${result.nodesExplored} nodes`;
     } else if (reason === 'stalled') {
-      status = `Solved (10s timeout) · ${result.nodesExplored} nodes explored`;
+      status = `Timed out after 40s without improvement · ${result.nodesExplored} nodes explored`;
     } else {
       status = `No solution · ${result.nodesExplored} nodes explored`;
     }
@@ -1049,6 +1071,7 @@ export class KongmingGame {
     this.solverInitialPegCount = 0;
     this.solverBestMovesLength = 0;
     this.solverLastImprovementTime = 0;
+    this.solverPerfectDetectedAt = null;
     if (wasRunning && !hadResult) {
       this.setStatus('Solver stopped.');
     }
