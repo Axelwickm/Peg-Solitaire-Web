@@ -23,7 +23,7 @@
 		<link rel="canonical" href="https://pegsolitaire.fun/">
 
 		<link rel="preload" href="static/board.webp" as="image" fetchpriority="high">
-		<link rel="preload" href="./main.js" as="script">
+		<link rel="modulepreload" href="./main.js" crossorigin="anonymous" fetchpriority="high">
 
 		<script type="application/ld+json">
 			{
@@ -1353,7 +1353,7 @@
 						});
 						})();
 		</script>
-		<script type="module" src="./main.js"></script>
+		<script type="module" src="./main.js" crossorigin="anonymous"></script>
 		<script>
 			if ('serviceWorker' in navigator) {
 				window.addEventListener('load', () => {

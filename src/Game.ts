@@ -1,11 +1,11 @@
 import { BoardShape } from './shapes';
 import {
-  IdaStarSolver,
+  BidirectionalBfidaSolver,
   SolverResult,
   SolverMove,
-  IdaStarSession,
+  BidirectionalBfidaSession,
   SolverSessionProgress,
-} from './solver/IdaStarSolver';
+} from './solver/BfidaSolver';
 
 export type PlayLogEntry = {
   timestamp: string;
@@ -55,13 +55,16 @@ export class KongmingGame {
   private solverLines: SVGLineElement[] = [];
   private solverCircles: SVGCircleElement[] = [];
   private solverTexts: SVGTextElement[] = [];
-  private solverSession: IdaStarSession | null = null;
+  private solverSession: BidirectionalBfidaSession | null = null;
   private solverRunning = false;
   private solverTimer: number | null = null;
   private solverStartTime = 0;
   private solverResult: SolverResult | null = null;
   private solverPromiseResolve: ((result: SolverResult) => void) | null = null;
   private solverLastProgress: SolverSessionProgress | null = null;
+  private solverLastImprovementTime = 0;
+  private solverBestMovesLength = 0;
+  private solverInitialPegCount = 0;
   private autoplayActive = false;
   private autoplayMoves: SolverMove[] = [];
   private autoplayIndex = 0;
@@ -805,8 +808,14 @@ export class KongmingGame {
   }
 
   public solvePuzzle(): SolverResult {
-    const solver = new IdaStarSolver(this.allowedMoves);
-    return solver.solve(new Set(this.pegs), this.currentShape.empty);
+    console.log('[UI] solvePuzzle invoked', {
+      shape: this.currentShape.id,
+      pegCount: this.pegs.size,
+    });
+    const solver = new BidirectionalBfidaSolver(this.allowedMoves);
+    const result = solver.solve(new Set(this.pegs), this.currentShape.empty);
+    console.log('[UI] solvePuzzle result', result);
+    return result;
   }
 
   private pushHistoryState(): void {
@@ -853,15 +862,37 @@ export class KongmingGame {
   public async startAutoSolveVisualization(chunkMs = 50): Promise<SolverResult> {
     this.autoSolveUsed = true;
     if (this.solverRunning && this.solverResult) {
+      console.log('[UI] Solver already running, returning cached result');
       return this.solverResult;
     }
     this.clearSolverVisualization();
-    this.solverSession = new IdaStarSolver(this.allowedMoves).createSession(
-      new Set(this.pegs),
-      this.currentShape.empty,
-    );
+    console.log('[UI] Starting auto-solve', {
+      shape: this.currentShape.id,
+      pegCount: this.pegs.size,
+      chunkMs,
+    });
+    const solver = new BidirectionalBfidaSolver(this.allowedMoves);
+    const session = solver.createSession(new Set(this.pegs), this.currentShape.empty);
+    if (!session) {
+      const result: SolverResult = {
+        solved: false,
+        moves: [],
+        bestMoves: [],
+        nodesExplored: 0,
+        durationMs: 0,
+      };
+      this.solverSession = null;
+      this.solverResult = result;
+      this.setStatus('No solution: start and goal are in different position classes.');
+      return result;
+    }
+    this.solverSession = session;
+    this.setStatus('Solving…');
     this.solverRunning = true;
     this.solverStartTime = performance.now();
+    this.solverInitialPegCount = this.pegs.size;
+    this.solverBestMovesLength = 0;
+    this.solverLastImprovementTime = performance.now();
     this.boardWrapper.classList.add('solver-busy');
     const promise = new Promise<SolverResult>(resolve => {
       this.solverPromiseResolve = resolve;
@@ -869,39 +900,31 @@ export class KongmingGame {
         if (!this.solverSession) return;
         const progress = this.solverSession.runChunk(chunkMs);
         this.solverLastProgress = progress;
+        this.recordSolverImprovement(progress);
+        const stalled =
+          this.solverBestMovesLength > 0 &&
+          performance.now() - this.solverLastImprovementTime > 10000;
+        console.log('[UI] Solver chunk', {
+          done: progress.done,
+          solved: progress.solved,
+          nodes: progress.nodesExplored,
+          pathLength: progress.bestMoves.length,
+        });
         const color = progress.done && progress.solved ? 'lime' : 'red';
         this.updateSolverLines(progress.currentPath, color);
+        if (!progress.done) {
+          const bestSuffix = this.formatBestStatusSuffix();
+          this.setStatus(
+            `Solving… ${progress.nodesExplored} nodes · ${progress.bestMoves.length} moves ready${bestSuffix}`,
+          );
+        }
         if (progress.done) {
-          this.solverRunning = false;
-          this.boardWrapper.classList.remove('solver-busy');
-          const result: SolverResult = {
-            solved: progress.solved,
-            moves: progress.bestMoves,
-            bestMoves: progress.bestMoves,
-            nodesExplored: progress.nodesExplored,
-            durationMs: Math.max(0, performance.now() - this.solverStartTime),
-          };
-          this.solverResult = result;
-          if (result.bestMoves.length > 0) {
-            this.autoplayPlanVersion += 1;
-            this.autoplayKnownPlanVersion = this.autoplayPlanVersion;
-            this.autoplayMoves = [...result.bestMoves];
-            this.autoplayIndex = 0;
-          }
-          if (result.solved) {
-            this.autoplayPlanVersion += 1;
-            this.autoplayKnownPlanVersion = this.autoplayPlanVersion;
-            this.autoplayMoves = [...result.moves];
-            this.autoplayIndex = 0;
-          }
-          this.solverSession = null;
-          if (this.solverTimer !== null) {
-            window.clearTimeout(this.solverTimer);
-            this.solverTimer = null;
-          }
-          this.solverPromiseResolve = null;
-          this.updateSolverLines(progress.bestMoves, progress.solved ? 'lime' : 'red');
-          resolve(result);
+          this.finishSolverRun(progress, resolve, 'completed');
+          return;
+        }
+        if (stalled) {
+          console.log('[UI] Solver stalled, returning best-so-far solution');
+          this.finishSolverRun(progress, resolve, 'stalled');
           return;
         }
         this.solverTimer = window.setTimeout(step, 0);
@@ -911,7 +934,85 @@ export class KongmingGame {
     return promise;
   }
 
+  private recordSolverImprovement(progress: SolverSessionProgress): void {
+    const bestLength = progress.bestMoves.length;
+    const improved =
+      bestLength > 0 &&
+      (this.solverBestMovesLength === 0 || bestLength < this.solverBestMovesLength);
+    if (improved) {
+      this.solverBestMovesLength = bestLength;
+      this.solverLastImprovementTime = performance.now();
+    }
+  }
+
+  private getBestPegsLeft(): number | null {
+    if (!this.solverInitialPegCount) return null;
+    if (!this.solverBestMovesLength) return null;
+    const pegsLeft = Math.max(1, this.solverInitialPegCount - this.solverBestMovesLength);
+    return pegsLeft;
+  }
+
+  private formatBestStatusSuffix(): string {
+    const bestLeft = this.getBestPegsLeft();
+    if (bestLeft === null) {
+      return '';
+    }
+    return ` · Best: ${bestLeft} peg${bestLeft === 1 ? '' : 's'} left (${this.solverBestMovesLength} move${this.solverBestMovesLength === 1 ? '' : 's'
+      })`;
+  }
+
+  private finishSolverRun(
+    progress: SolverSessionProgress,
+    resolve: (result: SolverResult) => void,
+    reason: 'completed' | 'stalled',
+  ): void {
+    const solved = reason === 'completed' && progress.solved;
+    this.solverRunning = false;
+    this.boardWrapper.classList.remove('solver-busy');
+    const result: SolverResult = {
+      solved,
+      moves: progress.bestMoves,
+      bestMoves: progress.bestMoves,
+      nodesExplored: progress.nodesExplored,
+      durationMs: Math.max(0, performance.now() - this.solverStartTime),
+    };
+    this.solverResult = result;
+    if (result.bestMoves.length > 0) {
+      this.autoplayPlanVersion += 1;
+      this.autoplayKnownPlanVersion = this.autoplayPlanVersion;
+      this.autoplayMoves = [...result.bestMoves];
+      this.autoplayIndex = 0;
+    }
+    if (result.solved) {
+      this.autoplayPlanVersion += 1;
+      this.autoplayKnownPlanVersion = this.autoplayPlanVersion;
+      this.autoplayMoves = [...result.moves];
+      this.autoplayIndex = 0;
+    }
+    this.solverSession = null;
+    if (this.solverTimer !== null) {
+      window.clearTimeout(this.solverTimer);
+      this.solverTimer = null;
+    }
+    this.solverPromiseResolve = null;
+    this.updateSolverLines(progress.bestMoves, result.solved ? 'lime' : 'red');
+    console.log('[UI] Solver finished', { ...result, reason });
+    let status: string;
+    if (result.solved) {
+      status = `Solved in ${result.durationMs.toFixed(1)}ms · ${result.nodesExplored} nodes`;
+    } else if (reason === 'stalled') {
+      status = `Solved (10s timeout) · ${result.nodesExplored} nodes explored`;
+    } else {
+      status = `No solution · ${result.nodesExplored} nodes explored`;
+    }
+    status += this.formatBestStatusSuffix();
+    this.setStatus(status);
+    resolve(result);
+  }
+
   public clearSolverVisualization(): void {
+    const wasRunning = this.solverRunning;
+    const hadResult = !!this.solverResult;
     this.solverRunning = false;
     this.solverSession = null;
     if (this.solverTimer !== null) {
@@ -938,6 +1039,12 @@ export class KongmingGame {
       this.solverPromiseResolve = null;
     }
     this.solverLastProgress = null;
+    this.solverInitialPegCount = 0;
+    this.solverBestMovesLength = 0;
+    this.solverLastImprovementTime = 0;
+    if (wasRunning && !hadResult) {
+      this.setStatus('Solver stopped.');
+    }
     const event = new CustomEvent('solver:cleared');
     document.dispatchEvent(event);
     this.stopAutoPlayInternal();

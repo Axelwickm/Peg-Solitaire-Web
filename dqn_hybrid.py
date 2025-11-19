@@ -1,36 +1,34 @@
 """
-Hybrid-search–supervised DQN for Kongming Chess (cross/triangle) using PyTorch.
+Model-guided Kongming Chess solver/trainer.
 
-What it does:
-- Recreates the board shapes and legal moves (cross + triangle).
-- Samples randomized mid-game states.
-- Uses a shallow hybrid search (limited-depth minimization of pegs) to label
-  legal moves with target Q-values.
-- Trains a masked DQN (supervised targets) in mini-batches.
-
-Notes:
-- This is a lightweight reference; hyperparameters are conservative to keep
-  runtime modest. Increase depth/epochs/batch_size for better policies.
-- Requires `torch`. Install with: pip install torch
+Goals (reworked):
+- Single, shape-agnostic attention model (no arch switches).
+- Curriculum: start from easy endgames (few pegs) and expand.
+- Hybrid inference: IDA* ordered by model Q-values.
+- Hard-coded defaults live in one place (Defaults).
 """
 
 from __future__ import annotations
 
+import argparse
 import math
+import os
 import random
+import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
-
-import argparse
-import os
-import time
+from typing import Dict, Iterable, List, Tuple
 
 import numpy as np
-import numba as nb
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from ida_solver import (
+    ModelGuidedIdaStar,
+    SearchMove,
+    apply_action,
+    legal_mask_for_state,
+)
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -38,7 +36,7 @@ except ImportError:  # pragma: no cover
     SummaryWriter = None  # type: ignore[assignment]
 
 # --------------------------
-# Board utilities (mirrors TS logic)
+# Shapes and board utilities
 # --------------------------
 
 
@@ -65,9 +63,7 @@ def build_triangle_rows(width: int, height: int) -> List[List[str]]:
     return rows
 
 
-def collect_triangle_axes(
-    rows: List[List[str]], dr: int, d_idx: int
-) -> List[List[str]]:
+def collect_triangle_axes(rows: List[List[str]], dr: int, d_idx: int) -> List[List[str]]:
     axes: List[List[str]] = []
 
     def get(row: int, idx: int) -> str | None:
@@ -106,7 +102,17 @@ def build_allowed_moves_from_axes(axes: List[List[str]]) -> Dict[str, Dict[str, 
     return moves
 
 
-def create_shapes() -> Dict[str, Dict]:
+@dataclass
+class ShapeDef:
+    id: str
+    holes: List[str]
+    empty: str
+    allowed: Dict[str, Dict[str, str]]
+    width: int
+    height: int
+
+
+def create_shapes() -> Dict[str, ShapeDef]:
     # Cross
     cross_holes: List[str] = []
     for r in range(7):
@@ -120,16 +126,23 @@ def create_shapes() -> Dict[str, Dict]:
     tri_w, tri_h = 9, 5
     tri_rows = build_triangle_rows(tri_w, tri_h)
     tri_holes = [cell for row in tri_rows for cell in row]
-    tri_axes = (
-        tri_rows
-        + collect_triangle_axes(tri_rows, 1, 0)
-        + collect_triangle_axes(tri_rows, 1, 1)
+    tri_axes = tri_rows + collect_triangle_axes(tri_rows, 1, 0) + collect_triangle_axes(
+        tri_rows, 1, 1
     )
     tri_moves = build_allowed_moves_from_axes(tri_axes)
 
     return {
-        "cross": {"holes": cross_holes, "empty": "3,3", "allowed": cross_moves},
-        "triangle": {"holes": tri_holes, "empty": "0,4", "allowed": tri_moves},
+        "cross": ShapeDef(
+            id="cross", holes=cross_holes, empty="3,3", allowed=cross_moves, width=7, height=7
+        ),
+        "triangle": ShapeDef(
+            id="triangle",
+            holes=tri_holes,
+            empty="0,4",
+            allowed=tri_moves,
+            width=9,
+            height=5,
+        ),
     }
 
 
@@ -141,202 +154,534 @@ def get_device() -> torch.device:
 
 
 # --------------------------
-# Env
+# Environment
 # --------------------------
 
 
 class KongmingEnv:
     def __init__(
         self,
-        shape_id: str = "cross",
-        random_remove: int = 6,
-        start_pegs_min: int | None = None,
-        start_pegs_max: int | None = None,
+        shape: ShapeDef,
     ):
-        cfg = SHAPES[shape_id]
-        self.shape_id = shape_id
-        self.holes = cfg["holes"]
-        self.empty = cfg["empty"]
-        self.allowed = cfg["allowed"]
-        self.random_remove = random_remove
-        self.start_pegs_min = start_pegs_min
-        self.start_pegs_max = start_pegs_max
+        self.shape = shape
+        self.holes = shape.holes
+        self.empty = shape.empty
+        self.allowed = shape.allowed
         self.idx_map: Dict[str, int] = {h: i for i, h in enumerate(self.holes)}
         self.actions = self._build_actions()
         self.state = np.zeros(len(self.holes), dtype=np.bool_)
-        self.reset()
+        self.reset_full()
 
     def _build_actions(self) -> np.ndarray:
         arr = []
         for frm, dests in self.allowed.items():
             for to, jump in dests.items():
-                arr.append(
-                    [
-                        self.idx_map[frm],
-                        self.idx_map[to],
-                        self.idx_map[jump],
-                    ]
-                )
+                arr.append([self.idx_map[frm], self.idx_map[to], self.idx_map[jump]])
         return np.array(arr, dtype=np.int32)
 
-    def reset(self):
+    def reset_full(self):
         self.state[:] = False
         self.state[list(self.idx_map.values())] = True
         if self.empty in self.idx_map:
             self.state[self.idx_map[self.empty]] = False
-        if self.start_pegs_min is not None or self.start_pegs_max is not None:
-            max_pegs = len(self.holes) - 1
-            min_target = self.start_pegs_min if self.start_pegs_min is not None else 1
-            min_target = max(1, min(min_target, max_pegs))
-            max_target = (
-                self.start_pegs_max if self.start_pegs_max is not None else max_pegs
-            )
-            max_target = max(min_target, min(max_target, max_pegs))
-            target_pegs = random.randint(min_target, max_target)
-            current_pegs = int(self.state.sum())
-            to_remove = max(0, current_pegs - target_pegs)
-            if to_remove > 0:
-                removable = list(np.where(self.state)[0])
-                drop = random.sample(removable, k=min(to_remove, len(removable)))
-                self.state[drop] = False
-        else:
-            available = list(np.where(self.state)[0])
-            drop = random.sample(available, k=min(self.random_remove, len(available)))
+        return self.obs()
+
+    def reset_with_pegs(self, target_pegs: int):
+        # Try to construct a start state by reversing legal moves from the solved position.
+        generated = self._generate_backward_state(target_pegs)
+        if generated is not None:
+            self.state = generated
+            return self.obs()
+
+        # Fallback: random removals from a full board.
+        self.reset_full()
+        current_pegs = int(self.state.sum())
+        to_remove = max(0, current_pegs - target_pegs)
+        if to_remove > 0:
+            removable = list(np.where(self.state)[0])
+            drop = random.sample(removable, k=min(to_remove, len(removable)))
             self.state[drop] = False
         return self.obs()
+
+    def _generate_backward_state(self, target_pegs: int, max_attempts: int = 64) -> np.ndarray | None:
+        if target_pegs <= 1:
+            # Solved state: single peg at the target.
+            state = np.zeros_like(self.state)
+            state[self.idx_map[self.empty]] = True
+            return state
+
+        for _ in range(max_attempts):
+            state = np.zeros_like(self.state)
+            state[self.idx_map[self.empty]] = True
+            steps = 0
+            # Reverse moves until we reach the desired peg count or run out of options.
+            while state.sum() < target_pegs:
+                reverse_moves = self._reverse_legal_moves(state)
+                if not reverse_moves:
+                    break
+                move_idx = random.randrange(len(reverse_moves))
+                frm, to, jump, action_idx = reverse_moves[move_idx]
+                # Reverse application: place pegs on from and jump, clear to.
+                state[frm] = True
+                state[jump] = True
+                state[to] = False
+                steps += 1
+                if steps > target_pegs * 4:  # avoid runaway loops
+                    break
+            if state.sum() == target_pegs:
+                return state
+        return None
+
+    def _reverse_legal_moves(self, state: np.ndarray) -> List[Tuple[int, int, int, int]]:
+        moves: List[Tuple[int, int, int, int]] = []
+        for idx, (frm, to, jump) in enumerate(self.actions):
+            if state[to] and (not state[frm]) and (not state[jump]):
+                moves.append((frm, to, jump, idx))
+        return moves
 
     def obs(self) -> torch.Tensor:
         return torch.from_numpy(self.state.astype(np.float32))
 
-    def legal_mask(self) -> torch.Tensor:
-        mask = self.legal_mask_numpy()
-        return torch.from_numpy(mask)
-
     def legal_mask_numpy(self) -> np.ndarray:
-        mask = np.zeros(len(self.actions), dtype=np.bool_)
-        for i, (frm, to, jump) in enumerate(self.actions):
-            if self.state[frm] and (not self.state[to]) and self.state[jump]:
-                mask[i] = True
-        return mask
+        return legal_mask_for_state(self.state, self.actions)
 
     def step(self, action_idx: int) -> Tuple[torch.Tensor, float, bool]:
         frm, to, jump = self.actions[action_idx]
         if not (self.state[frm] and (not self.state[to]) and self.state[jump]):
+            # illegal move: stop early
             return self.obs(), -1.0, True
         self.state[frm] = False
         self.state[jump] = False
         self.state[to] = True
         mask = self.legal_mask_numpy()
         done = (self.state.sum() == 1) or (mask.sum() == 0)
-        reward = 1.0 if done and self.state.sum() == 1 else -0.01
+        reward = 0.0
+        if done:
+            reward = compute_final_reward(self, center_bonus=True)
         return self.obs(), reward, done
 
 
 # --------------------------
-# Hybrid search for targets
+# Model
 # --------------------------
 
 
-def min_pegs_after_move(
+def normalize_coords(coords: List[Tuple[int, int]], width: int, height: int) -> torch.Tensor:
+    if width <= 1:
+        width = 2
+    if height <= 1:
+        height = 2
+    normed = []
+    for r, c in coords:
+        r_n = (r / (height - 1)) * 2 - 1
+        c_n = (c / (width - 1)) * 2 - 1
+        normed.append([r_n, c_n])
+    return torch.tensor(normed, dtype=torch.float32)
+
+
+@dataclass
+class ShapeContext:
+    shape: ShapeDef
+    idx_map: Dict[str, int]
+    actions: torch.Tensor  # (A, 3)
+    coords: torch.Tensor  # (H, 2) normalized
+    shape_idx: int
+
+
+def build_shape_contexts(shapes: Dict[str, ShapeDef]) -> Dict[str, ShapeContext]:
+    ctxs: Dict[str, ShapeContext] = {}
+    for idx, shape in enumerate(shapes.values()):
+        idx_map = {h: i for i, h in enumerate(shape.holes)}
+        actions = []
+        for frm, dests in shape.allowed.items():
+            for to, jump in dests.items():
+                actions.append([idx_map[frm], idx_map[to], idx_map[jump]])
+        coords = normalize_coords(
+            [tuple(map(int, h.split(","))) for h in shape.holes], shape.width, shape.height
+        )
+        ctxs[shape.id] = ShapeContext(
+            shape=shape,
+            idx_map=idx_map,
+            actions=torch.tensor(actions, dtype=torch.long),
+            coords=coords,
+            shape_idx=idx,
+        )
+    return ctxs
+
+
+class PegAttentionQ(nn.Module):
+    def __init__(
+        self,
+        d_model: int = 96,
+        nhead: int = 4,
+        num_layers: int = 2,
+        ff_dim: int = 192,
+        dropout: float = 0.1,
+        num_shapes: int = 2,
+    ):
+        super().__init__()
+        self.input_proj = nn.Linear(3, d_model)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=ff_dim,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.shape_embed = nn.Embedding(num_shapes, d_model)
+        self.token_norm = nn.LayerNorm(d_model)
+        self.action_head = nn.Sequential(
+            nn.LayerNorm(d_model * 3),
+            nn.Linear(d_model * 3, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, d_model // 2),
+            nn.ReLU(),
+            nn.Linear(d_model // 2, 1),
+        )
+
+    def forward(self, obs: torch.Tensor, ctx: ShapeContext) -> torch.Tensor:
+        # obs: (B, H)
+        batch = obs.shape[0]
+        coords = ctx.coords.to(obs.device)  # (H, 2)
+        coords = coords.unsqueeze(0).expand(batch, -1, -1)
+        shape_emb = self.shape_embed(
+            torch.tensor([ctx.shape_idx], device=obs.device, dtype=torch.long)
+        ).view(1, 1, -1)
+        shape_emb = shape_emb.expand(batch, coords.shape[1], -1)
+
+        features = torch.cat([obs.unsqueeze(-1), coords], dim=-1)
+        tokens = self.input_proj(features) + shape_emb
+        tokens = self.encoder(tokens)
+        tokens = self.token_norm(tokens)  # (B, H, D)
+
+        actions = ctx.actions.to(obs.device)  # (A, 3)
+        from_tok = tokens[:, actions[:, 0]]
+        to_tok = tokens[:, actions[:, 1]]
+        jump_tok = tokens[:, actions[:, 2]]
+        act_feat = torch.cat([from_tok, to_tok, jump_tok], dim=-1)
+        q_values = self.action_head(act_feat).squeeze(-1)  # (B, A)
+        return q_values
+
+
+# --------------------------
+# Replay buffer with n-step
+# --------------------------
+
+
+@dataclass
+class Transition:
+    obs: torch.Tensor
+    target: torch.Tensor
+    legal_mask: torch.Tensor
+
+
+class TeacherBuffer:
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.buffer: List[Transition | None] = [None] * capacity
+        self.idx = 0
+        self.full = False
+
+    def __len__(self):
+        return self.capacity if self.full else self.idx
+
+    def push(self, transition: Transition):
+        self.buffer[self.idx] = transition
+        self.idx = (self.idx + 1) % self.capacity
+        if self.idx == 0:
+            self.full = True
+
+    def sample(self, batch_size: int) -> List[Transition]:
+        n = len(self)
+        if n == 0:
+            return []
+        indices = np.random.choice(n, size=min(batch_size, n), replace=False)
+        result = []
+        for i in indices:
+            t = self.buffer[i]
+            if t is not None:
+                result.append(t)
+        return result
+
+
+class ReplayBuffer:
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.buffer: List[Transition | None] = [None] * capacity
+        self.idx = 0
+        self.full = False
+
+    def __len__(self):
+        return self.capacity if self.full else self.idx
+
+    def push(self, transition: Transition):
+        self.buffer[self.idx] = transition
+        self.idx = (self.idx + 1) % self.capacity
+        if self.idx == 0:
+            self.full = True
+
+    def sample(self, batch_size: int) -> List[Transition]:
+        n = len(self)
+        if n == 0:
+            return []
+        indices = np.random.choice(n, size=min(batch_size, n), replace=False)
+        result = []
+        for i in indices:
+            t = self.buffer[i]
+            if t is not None:
+                result.append(t)
+        return result
+
+
+# --------------------------
+# Utilities
+# --------------------------
+
+
+def compute_final_reward(env: KongmingEnv, center_bonus: bool = True) -> float:
+    pegs = int(env.state.sum())
+    reward = -float(pegs)
+    center_idx = env.idx_map.get(env.empty)
+    if center_bonus and center_idx is not None and env.state[center_idx]:
+        reward += 5.0
+    return reward
+
+
+def build_targets_from_search(
     env: KongmingEnv,
-    depth: int | None = None,
-    rollouts: int = 8,
-    model: nn.Module | None = None,
-    device: torch.device | None = None,
-    epsilon: float = 0.05,
-) -> Dict[int, float]:
-    mask = env.legal_mask_numpy()
-    scores: Dict[int, float] = {}
-    if mask.sum() == 0:
-        return scores
-    legal_buf = np.empty(len(env.actions), dtype=np.int32)
-    for action_idx, legal in enumerate(mask):
-        if not legal:
-            continue
-        base_state = env.state.copy()
-        apply_action_inplace(base_state, env.actions, action_idx)
-        acc = 0
-        for _ in range(rollouts):
-            state_copy = base_state.copy()
-            acc += run_rollout_guided(
-                state_copy,
-                env.actions,
-                depth,
-                model,
-                device,
-                epsilon,
-                legal_buf,
+    ctx: ShapeContext,
+    device: torch.device,
+    max_nodes: int,
+    solved_bonus: float = 5.0,
+) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, float]]:
+    legal_mask = legal_mask_for_state(env.state, env.actions)
+    legal_indices = np.where(legal_mask)[0]
+    act_dim = len(env.actions)
+    target = torch.zeros(act_dim, dtype=torch.float32)
+    if legal_indices.size == 0:
+        return target, torch.zeros_like(target, dtype=torch.bool), {"best_pegs": float(env.state.sum())}
+
+    best_pegs_overall = float(env.state.sum())
+    for idx in legal_indices:
+        next_state = apply_action(env.state, env.actions, int(idx))
+        solver = ModelGuidedIdaStar(
+            env, None, ctx, device, epsilon=0.0, max_nodes=max_nodes
+        )
+        res = solver.solve(next_state)
+        score = -float(res["best_pegs"])
+        if res["solved"]:
+            score += solved_bonus
+        target[idx] = score
+        best_pegs_overall = min(best_pegs_overall, float(res["best_pegs"]))
+
+    return target, torch.from_numpy(legal_mask), {"best_pegs": best_pegs_overall}
+
+
+def linear_decay(start: float, end: float, t: int, total: int) -> float:
+    if total <= 0:
+        return end
+    ratio = min(1.0, max(0.0, t / total))
+    return start + (end - start) * ratio
+
+
+# --------------------------
+# Curriculum
+# --------------------------
+
+
+class Curriculum:
+    def __init__(
+        self,
+        min_pegs: int,
+        start_max: int,
+        hard_cap: int,
+        bump_epochs: int,
+        threshold: float,
+    ):
+        self.min_pegs = min_pegs
+        self.current_max = start_max
+        self.hard_cap = hard_cap
+        self.bump_epochs = bump_epochs
+        self.threshold = threshold
+        self.below_count = 0
+
+    def sample_target(self) -> int:
+        return random.randint(self.min_pegs, self.current_max)
+
+    def update(self, mean_final_pegs: float) -> bool:
+        if mean_final_pegs < self.threshold:
+            self.below_count += 1
+            if self.below_count >= self.bump_epochs and self.current_max < self.hard_cap:
+                self.current_max = min(self.current_max + 1, self.hard_cap)
+                self.below_count = 0
+                return True
+            return False
+        self.below_count = 0
+        return False
+
+
+# --------------------------
+# Training
+# --------------------------
+
+
+@dataclass
+class Defaults:
+    shape: str = "cross"
+    epochs: int = 2000
+    steps_per_epoch: int = 256
+    batch_size: int = 512
+    buffer_size: int = 200_000
+    lr: float = 1e-4
+    random_remove: int = 6
+    start_pegs_min: int = 2
+    start_pegs_max: int = 6
+    hard_cap_pegs: int = 32
+    curriculum_bump_epochs: int = 10
+    curriculum_threshold: float = 1.2
+    teacher_nodes: int = 50_000
+    infer_games: int = 1
+    search_nodes: int = 1_000_000
+    search_epsilon: float = 0.0
+    logdir: str = "runs"
+    model_dir: str = "models"
+    run_name: str | None = None
+
+
+DEFAULTS = Defaults()
+
+
+def compute_q_loss(
+    batch: List[Transition],
+    model: PegAttentionQ,
+    target_model: PegAttentionQ,
+    ctx: ShapeContext,
+    gamma: float,
+    n_step: int,
+    device: torch.device,
+) -> torch.Tensor:
+    # Kept for reference; not used in teacher-guided training.
+    obs_batch = torch.stack([t.obs for t in batch]).to(device)  # (B, H)
+    act_batch = torch.tensor([0 for _ in batch], device=device, dtype=torch.long)
+    rew_batch = torch.tensor([0.0 for _ in batch], device=device, dtype=torch.float32)
+    next_obs_batch = torch.stack([t.obs for t in batch]).to(device)
+    done_batch = torch.tensor([False for _ in batch], device=device, dtype=torch.bool)
+    legal_next = torch.stack([t.legal_mask for t in batch]).to(device)
+    q_values = model(obs_batch, ctx)
+    q_taken = q_values.gather(1, act_batch.unsqueeze(1)).squeeze(1)
+    with torch.no_grad():
+        target_q = target_model(next_obs_batch, ctx)
+        target_q = target_q.masked_fill(~legal_next, -1e9)
+        max_next = target_q.max(dim=1).values
+        target = rew_batch + ((gamma**n_step) * max_next * (~done_batch))
+    return nn.functional.smooth_l1_loss(q_taken, target)
+
+
+def compute_supervised_loss(
+    batch: List[Transition],
+    model: PegAttentionQ,
+    ctx: ShapeContext,
+    device: torch.device,
+) -> torch.Tensor | None:
+    if not batch:
+        return None
+    obs_batch = torch.stack([t.obs for t in batch]).to(device)
+    target_batch = torch.stack([t.target for t in batch]).to(device)
+    mask_batch = torch.stack([t.legal_mask for t in batch]).to(device).bool()
+    preds = model(obs_batch, ctx)
+    if not mask_batch.any():
+        return None
+    pred_sel = torch.masked_select(preds, mask_batch)
+    target_sel = torch.masked_select(target_batch, mask_batch)
+    return nn.functional.smooth_l1_loss(pred_sel, target_sel)
+
+
+def train(
+    defaults: Defaults,
+    device: torch.device,
+    writer: SummaryWriter | None,
+    save_path: str,
+):
+    shape_contexts = build_shape_contexts(SHAPES)
+    model = PegAttentionQ(num_shapes=len(SHAPES)).to(device)
+    opt = optim.AdamW(model.parameters(), lr=defaults.lr)
+
+    buffers = {sid: TeacherBuffer(defaults.buffer_size) for sid in SHAPES}
+    curriculum = Curriculum(
+        min_pegs=defaults.start_pegs_min,
+        start_max=defaults.start_pegs_max,
+        hard_cap=defaults.hard_cap_pegs,
+        bump_epochs=defaults.curriculum_bump_epochs,
+        threshold=defaults.curriculum_threshold,
+    )
+
+    global_step = 0
+    for epoch in range(defaults.epochs):
+        epoch_losses: List[float] = []
+        epoch_final_pegs: List[int] = []
+        epoch_start_pegs: List[int] = []
+        for _ in range(defaults.steps_per_epoch):
+            shape_id = random.choice(list(SHAPES.keys()))
+            shape = SHAPES[shape_id]
+            ctx = shape_contexts[shape_id]
+            env = KongmingEnv(shape)
+
+            target_pegs = curriculum.sample_target()
+            obs = env.reset_with_pegs(target_pegs)
+            epoch_start_pegs.append(int(env.state.sum()))
+            target, legal_mask, stats = build_targets_from_search(
+                env, ctx, device, defaults.teacher_nodes
             )
-        scores[action_idx] = -(acc / rollouts) if rollouts else 0.0
-    return scores
+            if legal_mask.sum() == 0:
+                continue
+            buffers[shape_id].push(Transition(obs, target, legal_mask.bool()))
+            epoch_final_pegs.append(int(stats["best_pegs"]))
+            global_step += 1
+
+            batch = buffers[shape_id].sample(defaults.batch_size)
+            loss = compute_supervised_loss(batch, model, ctx, device)
+            if loss is not None:
+                opt.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                opt.step()
+                epoch_losses.append(loss.item())
+
+        mean_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
+        mean_final_pegs = (
+            sum(epoch_final_pegs) / len(epoch_final_pegs) if epoch_final_pegs else 0.0
+        )
+        mean_start_pegs = (
+            sum(epoch_start_pegs) / len(epoch_start_pegs) if epoch_start_pegs else 0.0
+        )
+        total_buffer = sum(len(buf) for buf in buffers.values())
+        bumped = curriculum.update(mean_final_pegs)
+        print(
+            f"[epoch {epoch + 1}] loss={mean_loss:.4f} "
+            f"start_pegs={mean_start_pegs:.2f} final_pegs={mean_final_pegs:.2f} "
+            f"cap={curriculum.current_max} buffer={total_buffer}",
+            flush=True,
+        )
+        if writer is not None:
+            writer.add_scalar("loss", mean_loss, epoch)
+            writer.add_scalar("final_pegs", mean_final_pegs, epoch)
+            writer.add_scalar("start_pegs", mean_start_pegs, epoch)
+            writer.add_scalar("buffer_size", total_buffer, epoch)
+            writer.add_scalar("start_cap", curriculum.current_max, epoch)
+        if bumped:
+            print(f"🛠️  Increased start peg cap to {curriculum.current_max} after stable final pegs.")
+        if (epoch + 1) % 50 == 0:
+            torch.save(model.state_dict(), save_path)
+            print(f"[epoch {epoch+1}] checkpoint saved to {save_path}", flush=True)
+    torch.save(model.state_dict(), save_path)
+    print(f"Training complete, model saved to {save_path}", flush=True)
+    return model
 
 
-@nb.njit
-def apply_action_inplace(state: np.ndarray, actions: np.ndarray, action_idx: int):
-    frm = actions[action_idx, 0]
-    to = actions[action_idx, 1]
-    jump = actions[action_idx, 2]
-    state[frm] = False
-    state[jump] = False
-    state[to] = True
-
-
-@nb.njit
-def compute_legal_indices(
-    state: np.ndarray, actions: np.ndarray, legal: np.ndarray
-) -> int:
-    count = 0
-    for i in range(actions.shape[0]):
-        frm = actions[i, 0]
-        to = actions[i, 1]
-        jump = actions[i, 2]
-        if state[frm] and (not state[to]) and state[jump]:
-            legal[count] = i
-            count += 1
-    return count
-
-
-@nb.njit
-def count_pegs(state: np.ndarray) -> int:
-    total = 0
-    for i in range(state.shape[0]):
-        if state[i]:
-            total += 1
-    return total
-
-
-def run_rollout_guided(
-    state: np.ndarray,
-    actions: np.ndarray,
-    depth: int | None,
-    model: nn.Module | None,
-    device: torch.device | None,
-    epsilon: float,
-    legal_buf: np.ndarray,
-) -> int:
-    steps = 0
-    max_steps = depth if depth is not None and depth > 0 else None
-    while True:
-        legal_count = compute_legal_indices(state, actions, legal_buf)
-        if legal_count == 0:
-            break
-        if model is not None and device is not None and random.random() > epsilon:
-            obs_tensor = (
-                torch.from_numpy(state.astype(np.float32)).unsqueeze(0).to(device)
-            )
-            with torch.no_grad():
-                q_vals = model(obs_tensor).cpu().numpy().squeeze(0)
-            legal_inds = legal_buf[:legal_count]
-            q_slice = q_vals[legal_inds]
-            best_idx = int(np.argmax(q_slice))
-            action_idx = int(legal_inds[best_idx])
-        else:
-            action_idx = int(legal_buf[random.randrange(legal_count)])
-        apply_action_inplace(state, actions, action_idx)
-        steps += 1
-        if max_steps is not None and steps >= max_steps:
-            break
-    return count_pegs(state)
+# --------------------------
+# Model-guided IDA* search
+# --------------------------
 
 
 @dataclass
@@ -357,47 +702,41 @@ class SearchFrame:
     move: SearchMove | None
 
 
-class ModelGuidedIdaStarSolver:
-    """Frontend-style IDA* search ordered by model Q-values."""
-
+class ModelGuidedIdaStar:
     def __init__(
         self,
         env: KongmingEnv,
-        model: nn.Module | None,
-        device: torch.device | None,
+        model: PegAttentionQ | None,
+        ctx: ShapeContext,
+        device: torch.device,
         epsilon: float = 0.0,
+        max_nodes: int | None = None,
     ):
-        if env.empty not in env.idx_map:
-            raise ValueError("Target hole not found in index map")
-        self.actions = env.actions
-        self.allowed = env.allowed
-        self.idx_map = env.idx_map
-        self.idx_to_hole = {idx: hole for hole, idx in self.idx_map.items()}
+        self.env = env
         self.model = model
+        self.ctx = ctx
         self.device = device
         self.epsilon = epsilon
+        self.max_nodes = max_nodes
         self.target_idx = env.idx_map[env.empty]
-        self.legal_buf = np.empty(len(self.actions), dtype=np.int32)
-        self.adjacency = self._build_adjacency()
+        self.legal_buf = np.empty(len(env.actions), dtype=np.int32)
         self.dist_to_target = self._compute_distances()
 
-    def _build_adjacency(self) -> Dict[int, List[int]]:
+    def _compute_distances(self) -> Dict[int, int]:
         adjacency: Dict[int, List[int]] = {}
-        for frm, dests in self.allowed.items():
-            frm_idx = self.idx_map[frm]
+        for frm, dests in self.env.allowed.items():
+            frm_idx = self.env.idx_map[frm]
             for to in dests:
-                to_idx = self.idx_map[to]
+                to_idx = self.env.idx_map[to]
                 adjacency.setdefault(frm_idx, []).append(to_idx)
                 adjacency.setdefault(to_idx, []).append(frm_idx)
-        return adjacency
 
-    def _compute_distances(self) -> Dict[int, int]:
         dist: Dict[int, int] = {self.target_idx: 0}
         queue = deque([self.target_idx])
         while queue:
             current = queue.popleft()
             base = dist[current]
-            for neighbor in self.adjacency.get(current, []):
+            for neighbor in adjacency.get(current, []):
                 if neighbor not in dist:
                     dist[neighbor] = base + 1
                     queue.append(neighbor)
@@ -427,17 +766,14 @@ class ModelGuidedIdaStarSolver:
         return max(peg_count - 1, span_penalty, spread_penalty)
 
     def _legal_moves(self, state: np.ndarray) -> List[SearchMove]:
-        legal_count = compute_legal_indices(state, self.actions, self.legal_buf)
-        legal_inds = self.legal_buf[:legal_count]
-        return [
-            SearchMove(
-                int(self.actions[idx, 0]),
-                int(self.actions[idx, 1]),
-                int(self.actions[idx, 2]),
-                int(idx),
-            )
-            for idx in legal_inds
-        ]
+        legal = self.env.legal_mask_numpy()
+        moves: List[SearchMove] = []
+        for idx, ok in enumerate(legal):
+            if not ok:
+                continue
+            frm, to, jump = self.env.actions[idx]
+            moves.append(SearchMove(int(frm), int(to), int(jump), idx))
+        return moves
 
     def _order_moves(self, state: np.ndarray, moves: List[SearchMove]) -> List[SearchMove]:
         if not moves:
@@ -449,20 +785,10 @@ class ModelGuidedIdaStarSolver:
             return moves
         obs_tensor = torch.from_numpy(state.astype(np.float32)).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            q_vals = self.model(obs_tensor).cpu().numpy().squeeze(0)
+            q_vals = self.model(obs_tensor, self.ctx).cpu().numpy().squeeze(0)
         return sorted(moves, key=lambda m: q_vals[m.action_idx], reverse=True)
 
-    def _pop_frame(
-        self, stack: List[SearchFrame], seen: set[str], path: List[SearchMove]
-    ) -> None:
-        frame = stack.pop()
-        seen.discard(frame.key)
-        if frame.move:
-            path.pop()
-
-    def solve(
-        self, initial_state: np.ndarray, max_nodes: int | None = None
-    ) -> Dict[str, object]:
+    def solve(self, initial_state: np.ndarray) -> Dict[str, object]:
         start_state = initial_state.astype(np.bool_, copy=True)
         bound = self._heuristic(start_state)
         next_bound = math.inf
@@ -486,6 +812,7 @@ class ModelGuidedIdaStarSolver:
             stack.append(SearchFrame(root_state, key, neighbors, 0, 0, None))
 
         reset_stack()
+        limit_hit = False
         while True:
             if not stack:
                 if math.isinf(next_bound):
@@ -497,13 +824,20 @@ class ModelGuidedIdaStarSolver:
 
             frame = stack[-1]
             nodes += 1
+            if self.max_nodes is not None and nodes >= self.max_nodes:
+                limit_hit = True
+                break
+
             h = self._heuristic(frame.state)
             f = frame.g + h
             peg_total = int(frame.state.sum())
 
             if f > bound:
                 next_bound = min(next_bound, f)
-                self._pop_frame(stack, seen, path)
+                stack.pop()
+                if frame.move:
+                    path.pop()
+                seen.discard(frame.key)
                 continue
 
             if peg_total < best_pegs:
@@ -515,26 +849,27 @@ class ModelGuidedIdaStarSolver:
                 best_path = list(path)
                 break
 
-            if max_nodes is not None and nodes >= max_nodes:
-                break
-
             if frame.idx >= len(frame.neighbors):
-                self._pop_frame(stack, seen, path)
+                stack.pop()
+                if frame.move:
+                    path.pop()
+                seen.discard(frame.key)
                 continue
 
             move = frame.neighbors[frame.idx]
             frame.idx += 1
             next_state = frame.state.copy()
-            apply_action_inplace(next_state, self.actions, move.action_idx)
+            frm, to, jump = self.env.actions[move.action_idx]
+            next_state[frm] = False
+            next_state[jump] = False
+            next_state[to] = True
             key = self._serialize(next_state)
             if key in seen:
                 continue
             seen.add(key)
             path.append(move)
             neighbors = self._order_moves(next_state, self._legal_moves(next_state))
-            stack.append(
-                SearchFrame(next_state, key, neighbors, 0, frame.g + 1, move)
-            )
+            stack.append(SearchFrame(next_state, key, neighbors, 0, frame.g + 1, move))
 
         duration_ms = (time.time() - start_time) * 1000
         return {
@@ -544,316 +879,17 @@ class ModelGuidedIdaStarSolver:
             "nodes_explored": nodes,
             "duration_ms": duration_ms,
             "best_pegs": best_pegs,
-            "limit_hit": max_nodes is not None and nodes >= max_nodes,
+            "limit_hit": limit_hit,
         }
 
 
-class OnPolicyBuffer:
-    def __init__(self, maxlen: int):
-        self.buffer: deque[Tuple[torch.Tensor, torch.Tensor]] = deque(maxlen=maxlen)
-
-    def append(self, obs: torch.Tensor, target: torch.Tensor) -> None:
-        self.buffer.append((obs, target))
-
-    def sample(self, batch_size: int) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-        length = len(self.buffer)
-        if length == 0:
-            return []
-        count = min(batch_size, length)
-        if count == length:
-            return list(self.buffer)
-        return random.sample(self.buffer, count)
-
-    def all(self) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-        return list(self.buffer)
-
-
-# --------------------------
-# DQN
-# --------------------------
-
-
-class QNet(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int):
-        super().__init__()
-        hidden = 256
-        self.net = nn.Sequential(
-            nn.Linear(obs_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, act_dim),
-        )
-
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        return self.net(obs)
-
-
-class TransformerQNet(nn.Module):
-    def __init__(
-        self,
-        obs_dim: int,
-        act_dim: int,
-        d_model: int = 32,
-        nhead: int = 4,
-        num_layers: int = 2,
-        ff_dim: int = 64,
-        dropout: float = 0.05,
-    ):
-        super().__init__()
-        self.obs_dim = obs_dim
-        self.input_proj = nn.Linear(1, d_model)
-        self.positional = nn.Parameter(torch.randn(obs_dim, d_model))
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=ff_dim,
-            dropout=dropout,
-            batch_first=True,
-        )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        self.head = nn.Sequential(
-            nn.LayerNorm(d_model),
-            nn.ReLU(),
-            nn.Linear(d_model, d_model),
-            nn.ReLU(),
-            nn.Linear(d_model, act_dim),
-        )
-
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        # Treat each board cell as a token; mean-pool transformer features for logits.
-        x = obs.unsqueeze(-1)
-        x = self.input_proj(x)
-        x = x + self.positional.unsqueeze(0)
-        x = self.encoder(x)
-        pooled = x.mean(dim=1)
-        return self.head(pooled)
-
-
-class Conv2DQNet(nn.Module):
-    def __init__(
-        self, obs_dim: int, act_dim: int, holes: List[str], shape_id: str, channels: int = 48
-    ):
-        super().__init__()
-        if shape_id == "cross":
-            self.height, self.width = 7, 7
-        elif shape_id == "triangle":
-            self.height, self.width = 5, 9
-        else:
-            side = int(math.ceil(math.sqrt(obs_dim)))
-            self.height, self.width = side, side
-        coords = [tuple(map(int, h.split(","))) for h in holes]
-        self.register_buffer(
-            "flat_indices",
-            torch.tensor([r * self.width + c for r, c in coords], dtype=torch.long),
-            persistent=False,
-        )
-        self.conv = nn.Sequential(
-            nn.Conv2d(1, channels, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-        self.head = nn.Sequential(
-            nn.Linear(channels, channels),
-            nn.ReLU(),
-            nn.Linear(channels, act_dim),
-        )
-
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        # Map flat hole observations onto a padded 2D grid, keeping blanks zeroed.
-        batch = obs.shape[0]
-        grid = obs.new_zeros(batch, self.height * self.width)
-        grid.scatter_(1, self.flat_indices.unsqueeze(0).expand(batch, -1), obs)
-        grid = grid.view(batch, 1, self.height, self.width)
-        feat = self.conv(grid)
-        pooled = feat.mean(dim=[2, 3])
-        return self.head(pooled)
-
-
-def build_model(
-    arch: str, obs_dim: int, act_dim: int, holes: List[str], shape_id: str
-) -> nn.Module:
-    if arch == "mlp":
-        return QNet(obs_dim, act_dim)
-    if arch == "transformer":
-        return TransformerQNet(obs_dim, act_dim)
-    if arch == "conv":
-        return Conv2DQNet(obs_dim, act_dim, holes, shape_id)
-    raise ValueError(f"Unknown arch '{arch}'")
-
-
-def compute_final_reward(env: KongmingEnv) -> float:
-    pegs = int(env.state.sum())
-    reward = -float(pegs)
-    center_idx = env.idx_map.get(env.empty)
-    if center_idx is not None and env.state[center_idx]:
-        reward += 1.0
-    return reward
-
-
-def select_action(
-    obs: torch.Tensor,
-    legal_indices: np.ndarray,
-    model: nn.Module | None,
-    device: torch.device | None,
-    epsilon: float,
-) -> int:
-    if not legal_indices.size:
-        raise RuntimeError("Attempted to select from zero legal actions")
-    if model is not None and device is not None and random.random() > epsilon:
-        obs_tensor = obs.unsqueeze(0).to(device)
-        with torch.no_grad():
-            q_vals = model(obs_tensor).cpu().numpy().squeeze(0)
-        action_slice = q_vals[legal_indices]
-        best = int(np.argmax(action_slice))
-        return int(legal_indices[best])
-    return int(np.random.choice(legal_indices))
-
-
-def collect_episode_transitions(
-    env: KongmingEnv,
-    model: nn.Module | None,
-    device: torch.device,
-    epsilon: float,
-) -> Tuple[List[Tuple[torch.Tensor, np.ndarray]], float]:
-    transitions: List[Tuple[torch.Tensor, np.ndarray]] = []
-    obs = env.obs()
-    while True:
-        mask = env.legal_mask_numpy()
-        legal_indices = np.where(mask)[0]
-        if legal_indices.size == 0:
-            break
-        transitions.append((obs.clone(), mask.copy()))
-        action_idx = select_action(obs, legal_indices, model, device, epsilon)
-        next_obs, _, done = env.step(action_idx)
-        obs = next_obs
-        if done:
-            break
-    final_reward = compute_final_reward(env)
-    return transitions, final_reward
-
-
-def train_dqn(
-    shape_id: str,
-    epochs: int,
-    batch_size: int,
-    random_remove: int,
-    epsilon: float,
-    start_pegs_min: int | None,
-    start_pegs_max: int | None,
-    buffer_size: int,
-    collect_batch: int,
-    device: torch.device | None,
-    save_every: int,
-    arch: str,
-    model_path: str = "models/cross.pt",
-    writer: SummaryWriter | None = None,
-):
-    env = KongmingEnv(
-        shape_id=shape_id,
-        random_remove=random_remove,
-        start_pegs_min=start_pegs_min,
-        start_pegs_max=start_pegs_max,
-    )
-    obs_dim = len(env.holes)
-    act_dim = len(env.actions)
-    device = device or get_device()
-    model = build_model(arch, obs_dim, act_dim, env.holes, shape_id).to(device)
-    print(
-        f"[{shape_id}] initialized {arch} model (obs={obs_dim}, acts={act_dim})",
-        flush=True,
-    )
-    os.makedirs(os.path.dirname(model_path), exist_ok=True)
-    if os.path.exists(model_path):
-        print(f"Loading existing model from {model_path}", flush=True)
-        model.load_state_dict(torch.load(model_path, map_location=device))
-    opt = optim.Adam(model.parameters(), lr=5e-5)
-    loss_fn = nn.MSELoss()
-
-    replay_buffer = OnPolicyBuffer(buffer_size)
-
-    last_loss = 0.0
-    for epoch in range(epochs):
-        print(f"[{shape_id}] starting epoch {epoch + 1}/{epochs}", flush=True)
-        epoch_final_rewards: List[float] = []
-        transition_count = 0
-
-        collected = 0
-        while collected < collect_batch:
-            env.reset()
-            transitions, final_reward = collect_episode_transitions(
-                env, model, device, epsilon
-            )
-            if transitions:
-                epoch_final_rewards.append(final_reward)
-                transition_count += len(transitions)
-                for obs_tensor, mask in transitions:
-                    target = torch.zeros(act_dim, dtype=torch.float32)
-                    mask_tensor = torch.from_numpy(mask)
-                    target[mask_tensor] = final_reward
-                    replay_buffer.append(obs_tensor, target)
-            collected += 1
-        print(
-            f"[{shape_id}] epoch {epoch + 1} collected {collected} episodes "
-            f"({transition_count} transitions), replay buffer size: {len(replay_buffer.buffer)}",
-            flush=True,
-        )
-
-        training_data = replay_buffer.all()
-        if not training_data:
-            print(
-                f"[{shape_id}] epoch {epoch + 1} buffer empty, skipping update",
-                flush=True,
-            )
-            continue
-        random.shuffle(training_data)
-        total_loss = 0.0
-        total_avg_target = 0.0
-        updates = 0
-        for start in range(0, len(training_data), batch_size):
-            batch = training_data[start : start + batch_size]
-            obs_tensor = torch.stack([sample[0] for sample in batch]).to(device)
-            target_tensor = torch.stack([sample[1] for sample in batch]).to(device)
-            pred_q = model(obs_tensor)
-            loss = loss_fn(pred_q, target_tensor)
-
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
-
-            total_loss += loss.item()
-            total_avg_target += target_tensor.mean().item()
-            updates += 1
-
-        last_loss = total_loss / updates
-        avg_targets = total_avg_target / updates
-        avg_final_reward = (
-            sum(epoch_final_rewards) / len(epoch_final_rewards)
-            if epoch_final_rewards
-            else 0.0
-        )
-        print(
-            f"[{shape_id}] epoch {epoch + 1}/{epochs} loss={last_loss:.4f} "
-            f"avg_target={avg_targets:.3f} avg_final_reward={avg_final_reward:.3f}",
-            flush=True,
-        )
-        if writer is not None:
-            writer.add_scalar(f"{shape_id}/loss", last_loss, epoch + 1)
-            writer.add_scalar(f"{shape_id}/avg_target", avg_targets, epoch + 1)
-            writer.add_scalar(
-                f"{shape_id}/avg_final_reward", avg_final_reward, epoch + 1
-            )
-        if (epoch + 1) % save_every == 0:
-            torch.save(model.state_dict(), model_path)
-            print(f"[{shape_id}] saved model to {model_path}", flush=True)
-
-    return model
+def move_to_str(move: SearchMove, idx_to_hole: Dict[int, str]) -> str:
+    return f"{idx_to_hole[move.frm]} -> {idx_to_hole[move.to]} (over {idx_to_hole[move.jump]})"
 
 
 def render_state(env: KongmingEnv):
-    if env.shape_id == "cross":
-        size = 7
+    if env.shape.id == "cross":
+        size = env.shape.width
         grid = [[" " for _ in range(size)] for _ in range(size)]
         hole_set = set(env.holes)
         for hole in hole_set:
@@ -863,7 +899,7 @@ def render_state(env: KongmingEnv):
             grid[r][c] = symbol
         print("\n".join("".join(row) for row in grid))
     else:
-        rows = build_triangle_rows(9, 5)
+        rows = build_triangle_rows(env.shape.width, env.shape.height)
         for row in rows:
             line = ""
             for hole in row:
@@ -873,51 +909,40 @@ def render_state(env: KongmingEnv):
     print("-" * 25)
 
 
-def move_to_text(move: SearchMove, idx_to_hole: Dict[int, str]) -> str:
-    return (
-        f"{idx_to_hole[move.frm]} -> {idx_to_hole[move.to]} "
-        f"(over {idx_to_hole[move.jump]})"
-    )
-
-
 def inference_hybrid(
-    shape_id: str,
     model_path: str,
+    defaults: Defaults,
     device: torch.device,
-    games: int = 1,
-    start_pegs_min: int | None = 3,
-    start_pegs_max: int | None = None,
-    arch: str = "mlp",
-    epsilon: float = 0.0,
-    random_remove: int = 6,
-    max_nodes: int | None = None,
+    start_pegs: int | None = None,
 ):
-    env = KongmingEnv(
-        shape_id=shape_id,
-        random_remove=random_remove,
-        start_pegs_min=start_pegs_min,
-        start_pegs_max=start_pegs_max,
-    )
-    obs_dim = len(env.holes)
-    act_dim = len(env.actions)
-    model = build_model(arch, obs_dim, act_dim, env.holes, shape_id).to(device)
+    shape_contexts = build_shape_contexts(SHAPES)
+    model = PegAttentionQ(num_shapes=len(SHAPES)).to(device)
     if not os.path.exists(model_path):
-        print(f"No model at {model_path}, run training first.")
+        print(f"No model at {model_path}, train first.")
         return
-    print(
-        f"[{shape_id}] loading {arch} model from {model_path} for hybrid search",
-        flush=True,
-    )
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
-    solver = ModelGuidedIdaStarSolver(env, model, device, epsilon=epsilon)
 
-    for game in range(games):
-        env.reset()
+    shape = SHAPES[defaults.shape]
+    ctx = shape_contexts[defaults.shape]
+    env = KongmingEnv(shape)
+    solver = ModelGuidedIdaStar(
+        env,
+        model,
+        ctx,
+        device,
+        epsilon=defaults.search_epsilon,
+        max_nodes=defaults.search_nodes if defaults.search_nodes > 0 else None,
+    )
+
+    start_pegs_val = start_pegs or defaults.hard_cap_pegs
+
+    for game in range(defaults.infer_games):
+        env.reset_with_pegs(start_pegs_val)
         start_state = env.state.copy()
         initial_pegs = int(start_state.sum())
         print(f"=== Hybrid game {game + 1} | start pegs: {initial_pegs} ===")
-        result = solver.solve(start_state, max_nodes=max_nodes)
+        result = solver.solve(start_state)
         best_moves: List[SearchMove] = result["best_moves"]
         print(
             f"nodes={result['nodes_explored']} "
@@ -930,8 +955,9 @@ def inference_hybrid(
             print("No moves available from this state.\n")
             continue
         env.state = start_state.copy()
+        idx_to_hole = {idx: hole for hole, idx in env.idx_map.items()}
         for step, move in enumerate(best_moves, 1):
-            print(f"Step {step}: {move_to_text(move, solver.idx_to_hole)}")
+            print(f"Step {step}: {move_to_str(move, idx_to_hole)}")
             env.step(move.action_idx)
         render_state(env)
         if result["solved"]:
@@ -941,201 +967,110 @@ def inference_hybrid(
             print(f"Best found path leaves {remaining} pegs.\n")
 
 
-def inference(
-    shape_id: str,
-    model_path: str,
-    device: torch.device,
-    games: int = 3,
-    delay: float = 0.4,
-    start_pegs_min: int | None = 3,
-    start_pegs_max: int | None = None,
-    arch: str = "mlp",
-):
-    env = KongmingEnv(
-        shape_id=shape_id,
-        random_remove=6,
-        start_pegs_min=start_pegs_min,
-        start_pegs_max=start_pegs_max,
-    )
-    obs_dim = len(env.holes)
-    act_dim = len(env.actions)
-    model = build_model(arch, obs_dim, act_dim, env.holes, shape_id).to(device)
-    if not os.path.exists(model_path):
-        print(f"No model at {model_path}, run training first.")
-        return
-    print(
-        f"[{shape_id}] loading {arch} model from {model_path}",
-        flush=True,
-    )
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-    for game in range(games):
-        obs = env.reset()
-        done = False
-        steps = 0
-        print(f"=== Game {game + 1} ===")
-        while not done:
-            mask = env.legal_mask_numpy()
-            legal = np.where(mask)[0]
-            render_state(env)
-            if len(legal) == 0:
-                print("No moves left.")
-                break
-            with torch.no_grad():
-                q_vals = model(obs.unsqueeze(0).to(device)).cpu().squeeze(0)
-            q_masked = q_vals[legal]
-            action_idx = int(legal[int(q_masked.argmax().item())])
-            obs, _, done = env.step(action_idx)
-            if done:
-                render_state(env)
-                print("done")
-            steps += 1
-            time.sleep(delay)
-        print(f"Game {game + 1} finished after {steps} moves.\n")
+# --------------------------
+# CLI
+# --------------------------
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Hybrid DQN trainer")
-    parser.add_argument("--shape", choices=["cross", "triangle"], default="cross")
-    parser.add_argument("--epochs", type=int, default=100_000_000)
-    parser.add_argument("--batch-size", type=int, default=10_000)
-    parser.add_argument(
-        "--depth",
+def add_common_args(subparser: argparse.ArgumentParser):
+    subparser.add_argument("--shape", choices=list(SHAPES.keys()), default=DEFAULTS.shape)
+    subparser.add_argument("--model-dir", default=DEFAULTS.model_dir)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Model-guided Kongming Chess")
+    subparsers = parser.add_subparsers(dest="command")
+    parser.set_defaults(command="train")
+
+    # Train
+    train_parser = subparsers.add_parser("train", help="Train the model")
+    add_common_args(train_parser)
+    train_parser.add_argument("--epochs", type=int, default=DEFAULTS.epochs)
+    train_parser.add_argument("--steps-per-epoch", type=int, default=DEFAULTS.steps_per_epoch)
+    train_parser.add_argument("--batch-size", type=int, default=DEFAULTS.batch_size)
+    train_parser.add_argument("--buffer-size", type=int, default=DEFAULTS.buffer_size)
+    train_parser.add_argument("--lr", type=float, default=DEFAULTS.lr)
+    train_parser.add_argument("--start-pegs-min", type=int, default=DEFAULTS.start_pegs_min)
+    train_parser.add_argument("--start-pegs-max", type=int, default=DEFAULTS.start_pegs_max)
+    train_parser.add_argument("--hard-cap-pegs", type=int, default=DEFAULTS.hard_cap_pegs)
+    train_parser.add_argument(
+        "--bump-epochs",
         type=int,
-        default=0,
-        help="Max steps per rollout (0 runs until no legal moves remain).",
+        default=DEFAULTS.curriculum_bump_epochs,
+        help="Consecutive epochs of low final pegs before raising start peg cap.",
     )
-    parser.add_argument("--rollouts", type=int, default=8)
-    parser.add_argument(
-        "--epsilon",
-        type=float,
-        default=0.1,
-        help="ε for on-policy rollouts (lower = greedier policy, some randomness).",
-    )
-    parser.add_argument("--random-remove", type=int, default=6)
-    parser.add_argument(
-        "--start-pegs-min",
+    train_parser.add_argument(
+        "--teacher-nodes",
         type=int,
-        default=3,
-        help="Minimum number of pegs to leave when the episode starts.",
+        default=DEFAULTS.teacher_nodes,
+        help="Node budget for teacher search when building targets.",
     )
-    parser.add_argument(
-        "--start-pegs-max",
+    train_parser.add_argument("--logdir", default=DEFAULTS.logdir)
+    train_parser.add_argument("--run-name", default=None)
+
+    # Inference
+    infer_parser = subparsers.add_parser("infer", help="Run model-guided IDA* search")
+    add_common_args(infer_parser)
+    infer_parser.add_argument("--games", type=int, default=DEFAULTS.infer_games)
+    infer_parser.add_argument("--search-nodes", type=int, default=DEFAULTS.search_nodes)
+    infer_parser.add_argument("--search-epsilon", type=float, default=DEFAULTS.search_epsilon)
+    infer_parser.add_argument(
+        "--start-pegs",
         type=int,
         default=None,
-        help="Maximum number of pegs to leave when the episode starts.",
+        help="Override starting peg count for inference (defaults to full board).",
     )
-    parser.add_argument(
-        "--buffer-size",
-        type=int,
-        default=1_000_000,
-        help="Max number of on-policy samples to keep for training.",
-    )
-    parser.add_argument(
-        "--collect-batch",
-        type=int,
-        default=64,
-        help="Number of inference episodes to collect before training on the buffer.",
-    )
-    parser.add_argument("--save-every", type=int, default=100)
-    parser.add_argument("--model-dir", default="models")
-    parser.add_argument("--logdir", default="runs")
-    parser.add_argument("--run-name", default=None, help="Name for this training run")
-    parser.add_argument(
-        "--infer", action="store_true", help="Run inference instead of training"
-    )
-    parser.add_argument(
-        "--infer-hybrid",
-        action="store_true",
-        help="Run frontend-style IDA* search guided by the model",
-    )
-    parser.add_argument(
-        "--arch",
-        choices=["mlp", "transformer", "conv"],
-        default="mlp",
-        help="Model architecture to use.",
-    )
-    parser.add_argument(
-        "--games", type=int, default=3, help="Games to play in inference mode"
-    )
-    parser.add_argument(
-        "--delay", type=float, default=0.4, help="Delay between inference steps"
-    )
-    parser.add_argument(
-        "--search-epsilon",
-        type=float,
-        default=0.0,
-        help="Random move ordering probability for hybrid inference.",
-    )
-    parser.add_argument(
-        "--max-search-nodes",
-        type=int,
-        default=1_000_000,
-        help="Maximum nodes to expand in hybrid inference (0 disables the cap).",
-    )
+
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     device = get_device()
     print(f"Using device: {device}", flush=True)
     os.makedirs(args.model_dir, exist_ok=True)
-    model_filename = (
-        f"{args.shape}.pt" if args.arch == "mlp" else f"{args.shape}-{args.arch}.pt"
-    )
-    model_path = os.path.join(args.model_dir, model_filename)
-    writer = None
-    if not args.infer and not args.infer_hybrid:
-        run_name = args.run_name or f"{args.shape}-{int(time.time())}"
-        logdir_path = os.path.join(args.logdir, run_name)
-        os.makedirs(logdir_path, exist_ok=True)
-        if SummaryWriter is not None:
-            print(f"TensorBoard logdir: {logdir_path}", flush=True)
-            writer = SummaryWriter(log_dir=logdir_path)
-        else:
-            print(
-                "TensorBoard summary writer unavailable; skipping logging.",
-                flush=True,
-            )
+    model_path = os.path.join(args.model_dir, "shared.pt")
 
-    if args.infer_hybrid:
-        inference_hybrid(
-            args.shape,
-            model_path,
-            device,
-            games=args.games,
-            start_pegs_min=args.start_pegs_min,
-            start_pegs_max=args.start_pegs_max,
-            arch=args.arch,
-            epsilon=args.search_epsilon,
-            random_remove=args.random_remove,
-            max_nodes=args.max_search_nodes if args.max_search_nodes > 0 else None,
+    if args.command == "infer":
+        defaults = Defaults(
+            shape=args.shape,
+            infer_games=args.games,
+            search_nodes=args.search_nodes,
+            search_epsilon=args.search_epsilon,
+            hard_cap_pegs=DEFAULTS.hard_cap_pegs,
+            model_dir=args.model_dir,
         )
-    elif args.infer:
-        inference(
-            args.shape,
-            model_path,
-            device,
-            games=args.games,
-            delay=args.delay,
-            start_pegs_min=args.start_pegs_min,
-            start_pegs_max=args.start_pegs_max,
-            arch=args.arch,
-        )
-    else:
-        train_dqn(
-            args.shape,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            random_remove=args.random_remove,
-            epsilon=args.epsilon,
-            start_pegs_min=args.start_pegs_min,
-            start_pegs_max=args.start_pegs_max,
-            buffer_size=args.buffer_size,
-            collect_batch=args.collect_batch,
-            device=device,
-            save_every=args.save_every,
-            arch=args.arch,
-            model_path=model_path,
-            writer=writer,
-        )
+        inference_hybrid(model_path, defaults, device, start_pegs=args.start_pegs)
+        return
+
+    defaults = Defaults(
+        shape=args.shape,
+        epochs=args.epochs,
+        steps_per_epoch=args.steps_per_epoch,
+        batch_size=args.batch_size,
+        buffer_size=args.buffer_size,
+        lr=args.lr,
+        start_pegs_min=args.start_pegs_min,
+        start_pegs_max=args.start_pegs_max,
+        hard_cap_pegs=args.hard_cap_pegs,
+        curriculum_bump_epochs=args.bump_epochs,
+        teacher_nodes=args.teacher_nodes,
+        logdir=args.logdir,
+        model_dir=args.model_dir,
+        run_name=args.run_name,
+    )
+
+    run_name = defaults.run_name or f"{defaults.shape}-{int(time.time())}"
+    logdir_path = os.path.join(defaults.logdir, run_name)
+    os.makedirs(logdir_path, exist_ok=True)
+    writer = SummaryWriter(log_dir=logdir_path) if SummaryWriter is not None else None
+    print(f"TensorBoard logdir: {logdir_path}" if writer else "TensorBoard unavailable.")
+    train(defaults, device, writer, model_path)
     if writer is not None:
         writer.close()
+
+
+if __name__ == "__main__":
+    main()

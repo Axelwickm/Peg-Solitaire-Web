@@ -2,7 +2,6 @@ import { KongmingGame } from './Game';
 import { initPlayStats } from './playStats';
 import { createMenuControls } from './menu/menuControls';
 import { shapes } from './shapes';
-import { initBuyView } from './buy/buyView';
 
 const isMainSite = Boolean(MAIN_SITE);
 
@@ -14,7 +13,34 @@ const buyPanel = document.getElementById('buy-panel');
 if (!isMainSite) {
   buyMenuButton?.remove();
   buyPanel?.remove();
+} else if (buyMenuButton) {
+  const warmBuyView = (): void => {
+    void loadBuyView();
+  };
+  buyMenuButton.addEventListener('pointerenter', warmBuyView, { once: true });
+  buyMenuButton.addEventListener('focus', warmBuyView, { once: true });
 }
+
+type BuyViewController = { show: () => void; hide: () => void };
+const noopBuyView: BuyViewController = { show: () => {}, hide: () => {} };
+let buyViewController: BuyViewController = noopBuyView;
+let buyViewLoader: Promise<BuyViewController> | null = null;
+const loadBuyView = (): Promise<BuyViewController> => {
+  if (!isMainSite) return Promise.resolve(noopBuyView);
+  if (buyViewLoader) return buyViewLoader;
+  buyViewLoader = import('./buy/buyView').then(({ initBuyView }) => {
+    buyViewController = initBuyView();
+    return buyViewController;
+  });
+  return buyViewLoader;
+};
+const showBuyView = (): void => {
+  if (!isMainSite) return;
+  void loadBuyView().then(controller => controller.show());
+};
+const hideBuyView = (): void => {
+  buyViewController.hide();
+};
 
 if (!boardEl || !statusEl || !boardWrapper) {
   throw new Error('Required DOM elements not found');
@@ -59,7 +85,6 @@ const helperActions = document.getElementById('helper-actions');
 const autoActions = document.getElementById('auto-actions');
 const autoSolveButton = document.getElementById('auto-solve') as HTMLButtonElement | null;
 const infoPanel = document.getElementById('info-panel');
-const buyView = isMainSite ? initBuyView() : { show: () => {}, hide: () => {} };
 const infoMenuButton = document.querySelector<HTMLButtonElement>('.menu-item[data-menu="info"]');
 const playMenuButton = document.querySelector<HTMLButtonElement>('.menu-item[data-menu="play"]');
 const boardMenuButton = document.querySelector<HTMLButtonElement>(
@@ -90,9 +115,9 @@ document.addEventListener('menu:activate', (event: Event) => {
     infoPanel?.classList.remove('visible');
   }
   if (menu === 'buy' && isMainSite) {
-    buyView.show();
+    showBuyView();
   } else {
-    buyView.hide();
+    hideBuyView();
   }
   const changedPanel: PanelSide | null = panel?.classList.contains('left')
     ? 'left'
@@ -218,9 +243,8 @@ autoSolveButton?.addEventListener('click', () => {
     game.clearSolverVisualization();
     return;
   }
-  autoSolveButton.textContent = 'Cancel';
-  autoSolveButton.title = 'Click to abort the solve';
   autoSolveButton.textContent = 'Solving…';
+  autoSolveButton.title = 'Solving…';
   game.startAutoSolveVisualization().then(result => {
     if (result.solved) {
       autoSolveButton.textContent = 'Solved';
@@ -233,6 +257,9 @@ autoSolveButton?.addEventListener('click', () => {
       autoPlayButton.disabled = !game.hasSolvePlan();
     }
   });
+});
+document.addEventListener('solver:cleared', () => {
+  resetAutoSolveState();
 });
 document.addEventListener('autoplay:started', () => {
   if (autoPlayButton) {
