@@ -268,7 +268,9 @@ function cycleShape(): void {
   localStorage.setItem('kongming-shape', shapes[currentShapeIndex].id);
   resetAutoSolveState();
   playStatsController?.refreshShapeFilter(shapes[currentShapeIndex].id);
-  game.updateStatusMessage(`Shape: ${nextShape.name}`);
+  const holeCount = nextShape.holes.length;
+  const holeLabel = holeCount === 1 ? 'hole' : 'holes';
+  game.updateStatusMessage(`Shape: ${nextShape.name} (${holeCount} ${holeLabel})`);
 }
 
 let suppressBoardCycle = false;

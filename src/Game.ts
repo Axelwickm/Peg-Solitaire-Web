@@ -162,6 +162,9 @@ export class KongmingGame {
         if (!this.validCells.has(key)) continue;
         const hole = document.createElement('div');
         hole.className = 'hole';
+        if (key === this.currentShape.empty) {
+          hole.classList.add('optimal-hole');
+        }
         if (this.selected === key) {
           hole.classList.add('selected');
         }
