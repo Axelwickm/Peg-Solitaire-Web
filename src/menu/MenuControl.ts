@@ -20,12 +20,19 @@ export class MenuControl {
   private readonly resizeHandler: () => void;
   private lastHighlightIndex = -1;
   private orientation: 'vertical' | 'horizontal' = 'vertical';
+  private ticksContainer: HTMLElement | null = null;
 
   constructor(panel: Element) {
     this.panel = panel as HTMLElement;
     this.line = this.panel.querySelector('.menu-line');
     this.handle = this.panel.querySelector('.menu-handle');
     this.items = Array.from(this.panel.querySelectorAll('.menu-item'));
+    if (this.line) {
+      this.ticksContainer = document.createElement('div');
+      this.ticksContainer.className = 'menu-line-ticks';
+      this.ticksContainer.setAttribute('aria-hidden', 'true');
+      this.line.appendChild(this.ticksContainer);
+    }
     this.moveHandler = e => this.moveHandle(e);
     this.upHandler = () => this.endDrag();
     this.resizeHandler = () => this.updateGeometry();
@@ -79,7 +86,10 @@ export class MenuControl {
     ) {
       this.handlePos = this.menuPositions[0] ?? (this.minHandlePos + this.maxHandlePos) / 2;
     }
+    this.panel.classList.toggle('horizontal', this.orientation === 'horizontal');
+    this.panel.classList.toggle('vertical', this.orientation === 'vertical');
     this.setHandlePosition(this.handlePos);
+    this.renderTicks();
   }
 
   private setHandlePosition(pos: number): void {
@@ -122,6 +132,22 @@ export class MenuControl {
     }
     this.activeIndex = highlightIndex;
     return nearestDist;
+  }
+
+  private renderTicks(): void {
+    const container = this.ticksContainer;
+    if (!container) return;
+    container.innerHTML = '';
+    if (this.orientation !== 'horizontal' || this.menuPositions.length === 0) {
+      return;
+    }
+    const range = this.maxHandlePos - this.minHandlePos || 1;
+    this.menuPositions.forEach(pos => {
+      const tick = document.createElement('span');
+      const ratio = range ? (pos - this.minHandlePos) / range : 0.5;
+      tick.style.left = `${ratio * 100}%`;
+      container.appendChild(tick);
+    });
   }
 
   private startDrag(event: PointerEvent): void {
