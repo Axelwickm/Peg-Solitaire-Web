@@ -4,7 +4,7 @@ Classic Peg Solitaire (also known as Kongming Chess) brought to the browser, tim
 
 [Play at pegsolitaire.fun](https://pegsolitaire.fun/)
 
-![App preview](app.webp)
+![App preview](static/app.webp)
 
 ## Features
 

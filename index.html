@@ -2,38 +2,46 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-		<title>Peg Solitaire</title>
-		<meta name="description" content="Play Peg Solitaire (Kongming Chess) online. Jump pegs to clear the board, explore cross and triangle layouts, and use helper hints or the auto-solver to master the puzzle.">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+
+		<title>Peg Solitaire Online (Kongming Chess)</title>
+
+		<meta name="description" content="Play Peg Solitaire free in your browser. Classic, cross, and triangle boards with clean controls, sleak themes, instant reset, and an optional auto-solver. No ads.">
+
 		<meta property="og:type" content="website">
-		<meta property="og:title" content="Peg Solitaire (Kongming Chess) | Play Online">
-		<meta property="og:description" content="Free online Peg Solitaire with Kongming Chess roots. Solve the classic peg puzzle with helpers, hints, and an auto-solver on multiple board shapes.">
-		<meta property="og:image" content="https://axelwickm.github.io/Kongming-Chess-Web/board.webp">
-		<meta property="og:url" content="https://axelwickm.github.io/Kongming-Chess-Web/">
+		<meta property="og:title" content="Peg Solitaire Online (Kongming Chess)">
+		<meta property="og:description" content="Play Peg Solitaire free online. Multiple board shapes, smooth controls, sleak themes, and an auto-solver. No ads.">
+		<meta property="og:image" content="https://pegsolitaire.fun/app.webp">
+		<meta property="og:url" content="https://pegsolitaire.fun/">
+
 		<meta name="twitter:card" content="summary_large_image">
-		<meta name="twitter:title" content="Peg Solitaire (Kongming Chess) | Play Online">
-		<meta name="twitter:description" content="Play the classic Peg Solitaire puzzle online with helpers, hints, and an auto-solver.">
-		<meta name="twitter:image" content="https://axelwickm.github.io/Kongming-Chess-Web/board.webp">
+		<meta name="twitter:title" content="Peg Solitaire Online (Kongming Chess)">
+		<meta name="twitter:description" content="Play the classic Peg Solitaire puzzle online with hints and an optional auto-solver.">
+		<meta name="twitter:image" content="https://pegsolitaire.fun/app.webp">
+
 		<link rel="icon" href="static/icon.png">
-		<link rel="canonical" href="https://axelwickm.github.io/Kongming-Chess-Web/">
+		<link rel="canonical" href="https://pegsolitaire.fun/">
+
 		<link rel="preload" href="static/board.webp" as="image" fetchpriority="high">
 		<link rel="preload" href="./main.js" as="script">
+
 		<script type="application/ld+json">
 			{
 				"@context": "https://schema.org",
 				"@type": "WebApplication",
-				"name": "Peg Solitaire (Kongming Chess)",
-				"description": "Play Peg Solitaire (also known as Kongming Chess) online with helper hints, multiple board shapes, and an auto-solver.",
-				"url": "https://axelwickm.github.io/Kongming-Chess-Web/",
+				"name": "Peg Solitaire Online (Kongming Chess)",
+				"description": "Play Peg Solitaire (also known as Kongming Chess) online with clean themes, multiple board shapes, hints, and an auto-solver.",
+				"url": "https://pegsolitaire.fun/",
 				"applicationCategory": "Game",
 				"operatingSystem": "Web",
-				"image": "https://axelwickm.github.io/Kongming-Chess-Web/board.webp",
+				"image": "https://pegsolitaire.fun/board.webp",
 				"author": {
 					"@type": "Person",
 					"name": "Axel Wickman"
 				}
 			}
 		</script>
+
 		<style>
 			:root {
 				color-scheme: light dark;
@@ -1008,7 +1016,7 @@
 				background: rgba(18, 20, 28, 0.92);
 				box-shadow: 0 10px 22px rgba(0, 0, 0, 0.7);
 			}
-			@media (max-width: 600px) {
+			@media (max-width: 750px) {
 				.content-row {
 					flex-direction: column;
 					align-items: center;
@@ -1167,8 +1175,8 @@
 						The first printed mention shows up in 1697 at Louis XIV's court, where Mercure galant outlined the cross board, rules, and sample drills.
 					</p>
 					<div class="info-links">
-						<a href="https://en.wikipedia.org/wiki/Peg_solitaire" target="_blank" rel="noreferrer">Read more on Wikipedia</a>
-						<a href="https://github.com/Axelwickm/Kongming-Chess-Web" target="_blank" rel="noreferrer">View this build on GitHub</a>
+						<a href="https://en.wikipedia.org/wiki/Peg_solitaire" target="_blank" rel="noreferrer" title="Read more on Wikipedia">Read more on Wikipedia</a>
+						<a href="https://github.com/Axelwickm/Kongming-Chess-Web" target="_blank" rel="noreferrer" title="View this build on GitHub">View this build on GitHub</a>
 					</div>
 				</div>
 				<div id="buy-panel" class="buy-panel panel-rounded" aria-live="polite">
