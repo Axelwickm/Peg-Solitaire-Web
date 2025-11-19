@@ -666,12 +666,11 @@
 				filter: grayscale(0.35);
 			}
 			.play-stats {
-				position: fixed;
-				bottom: 1rem;
-				left: 50%;
-				transform: translateX(-50%);
+				position: relative;
+				margin: 0 auto 1.25rem;
 				display: flex;
 				align-items: center;
+				justify-content: center;
 				text-transform: uppercase;
 				letter-spacing: 0.3em;
 				font-size: 0.65rem;
@@ -718,9 +717,9 @@
 			}
 			.play-stats-popup {
 				position: absolute;
-				bottom: 120%;
+				top: 120%;
 				left: 50%;
-				transform: translate(-50%, 12px);
+				transform: translate(-50%, -12px);
 				width: min(340px, 90vw);
 				background: rgba(255, 255, 255, 1.0);
 				border-radius: 16px;
@@ -739,15 +738,15 @@
 			.play-stats-popup::before {
 				content: '';
 				position: absolute;
-				bottom: -10px;
+				top: -10px;
 				left: 50%;
 				transform: translateX(-50%);
-				border-width: 10px 10px 0 10px;
+				border-width: 0 10px 10px 10px;
 				border-style: solid;
-				border-color: rgba(255, 255, 255, 0.95) transparent transparent transparent;
+				border-color: transparent transparent rgba(255, 255, 255, 0.95) transparent;
 			}
 			body.theme-dark .play-stats-popup::before {
-				border-color: rgba(18, 18, 26, 0.95) transparent transparent transparent;
+				border-color: transparent transparent rgba(18, 18, 26, 0.95) transparent;
 			}
 			.play-stats-popup.visible {
 				transform: translate(-50%, 0);
@@ -1335,6 +1334,35 @@
 		<main>
 			<h1>Peg Solitaire</h1>
 			<div id="status"></div>
+			<div class="play-stats" id="play-stats">
+				<button id="play-timer-button" type="button" class="timer-trigger">
+					<span>Time</span>
+					<strong id="play-timer">00:00</strong>
+				</button>
+				<div class="play-stats-popup"
+				     id="play-stats-popup"
+				     role="region"
+				     aria-label="Play stats history"
+				     aria-hidden="true"
+				>
+					<div class="popup-heading">Session history</div>
+					<div class="popup-controls">
+						<div class="legend">
+							<span><span class="dot time"></span>Time</span>
+							<span><span class="dot score"></span>Score</span>
+						</div>
+						<div class="shape-filter">
+							<label for="stats-shape-filter">Shape</label>
+							<select id="stats-shape-filter"></select>
+						</div>
+					</div>
+					<svg id="stats-graph" viewBox="0 0 320 160" aria-label="Play stats graph" role="img"></svg>
+					<div class="popup-footer">
+						<span id="play-stats-count">Games played: 0</span>
+						<button id="export-stats" type="button">Export to CSV</button>
+					</div>
+				</div>
+			</div>
 			<div class="content-row">
 				<div class="menu-panel left">
 					<div class="menu-label" role="status" aria-live="polite"></div>
@@ -1420,35 +1448,6 @@
 			<div class="auto-actions hidden" id="auto-actions">
 				<button id="auto-solve" type="button" aria-label="Auto-solve the puzzle">Solve</button>
 				<button id="auto-play" type="button" aria-label="Play the auto-solve plan">Play</button>
-			</div>
-			<div class="play-stats" id="play-stats">
-				<button id="play-timer-button" type="button" class="timer-trigger">
-					<span>Time</span>
-					<strong id="play-timer">00:00</strong>
-				</button>
-				<div class="play-stats-popup"
-				     id="play-stats-popup"
-				     role="region"
-				     aria-label="Play stats history"
-				     aria-hidden="true"
-				>
-					<div class="popup-heading">Session history</div>
-					<div class="popup-controls">
-						<div class="legend">
-							<span><span class="dot time"></span>Time</span>
-							<span><span class="dot score"></span>Score</span>
-						</div>
-						<div class="shape-filter">
-							<label for="stats-shape-filter">Shape</label>
-							<select id="stats-shape-filter"></select>
-						</div>
-					</div>
-					<svg id="stats-graph" viewBox="0 0 320 160" aria-label="Play stats graph" role="img"></svg>
-					<div class="popup-footer">
-						<span id="play-stats-count">Games played: 0</span>
-						<button id="export-stats" type="button">Export to CSV</button>
-					</div>
-				</div>
 			</div>
 		</main>
 
