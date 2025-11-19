@@ -5,6 +5,7 @@ import {
   SolverMove,
   BidirectionalBfidaSession,
   SolverSessionProgress,
+  SolverOptions,
 } from './solver/BfidaSolver';
 
 export type PlayLogEntry = {
@@ -807,12 +808,18 @@ export class KongmingGame {
     return [...this.pegs];
   }
 
+  private buildSolverOptions(): SolverOptions {
+    return {
+      enforceTargetTypeInvariant: this.currentShape?.targetTypeInvariant !== false,
+    };
+  }
+
   public solvePuzzle(): SolverResult {
     console.log('[UI] solvePuzzle invoked', {
       shape: this.currentShape.id,
       pegCount: this.pegs.size,
     });
-    const solver = new BidirectionalBfidaSolver(this.allowedMoves);
+    const solver = new BidirectionalBfidaSolver(this.allowedMoves, this.buildSolverOptions());
     const result = solver.solve(new Set(this.pegs), this.currentShape.empty);
     console.log('[UI] solvePuzzle result', result);
     return result;
@@ -871,7 +878,7 @@ export class KongmingGame {
       pegCount: this.pegs.size,
       chunkMs,
     });
-    const solver = new BidirectionalBfidaSolver(this.allowedMoves);
+    const solver = new BidirectionalBfidaSolver(this.allowedMoves, this.buildSolverOptions());
     const session = solver.createSession(new Set(this.pegs), this.currentShape.empty);
     if (!session) {
       const result: SolverResult = {

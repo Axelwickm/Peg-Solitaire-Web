@@ -8,6 +8,7 @@ export interface BoardShape {
   layout?: 'grid' | 'triangle';
   allowedMoves: Map<string, Map<string, string>>;
   finalTargetDescription: string;
+  targetTypeInvariant?: boolean;
 }
 
 const crossHoles: string[] = [];
@@ -126,6 +127,7 @@ export const shapes: BoardShape[] = [
     layout: 'triangle',
     allowedMoves: triangleAllowedMoves,
     finalTargetDescription: 'tip of the triangle',
+    targetTypeInvariant: false,
   },
   {
     id: 'european',

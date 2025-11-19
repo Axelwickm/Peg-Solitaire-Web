@@ -20,6 +20,10 @@ export interface SolverSessionProgress {
   bestMoves: SolverMove[];
 }
 
+export interface SolverOptions {
+  enforceTargetTypeInvariant?: boolean;
+}
+
 type BitState = bigint;
 
 type PegTypeCounts = [number, number, number, number];
@@ -74,6 +78,7 @@ interface SessionDerivedData {
   goalPagodaValue: number;
   startPagodaValue: number;
   pagodaEnabled: boolean;
+  enforceTargetTypeInvariant: boolean;
 }
 
 function cloneTypeCounts(counts: PegTypeCounts): PegTypeCounts {
@@ -914,7 +919,11 @@ class DirectionState {
       }
       const node = this.currentLayer[this.currentIndex++];
       const typeCounts = node.typeCounts ?? this.context.typeCounts(node.state);
-      if (typeCounts[this.sessionData.targetType] === 0 && node.state !== this.sessionData.goalStateBit) {
+      if (
+        this.sessionData.enforceTargetTypeInvariant &&
+        typeCounts[this.sessionData.targetType] === 0 &&
+        node.state !== this.sessionData.goalStateBit
+      ) {
         continue;
       }
       const pagodaEnabled = this.sessionData.pagodaEnabled;
@@ -1465,9 +1474,11 @@ export class BidirectionalBfidaSession {
 
 export class BidirectionalBfidaSolver {
   private readonly context: BoardContext;
+  private readonly enforceTargetTypeInvariant: boolean;
 
-  constructor(allowedMoves: Map<string, Map<string, string>>) {
+  constructor(allowedMoves: Map<string, Map<string, string>>, options?: SolverOptions) {
     this.context = new BoardContext(allowedMoves);
+    this.enforceTargetTypeInvariant = options?.enforceTargetTypeInvariant ?? true;
   }
 
   public createSession(initial: Set<string>, target: string): BidirectionalBfidaSession | null {
@@ -1504,6 +1515,7 @@ export class BidirectionalBfidaSolver {
       goalPagodaValue,
       startPagodaValue,
       pagodaEnabled,
+      enforceTargetTypeInvariant: this.enforceTargetTypeInvariant,
     };
     return new BidirectionalBfidaSession(this.context, sessionData, initialState, goalState, target);
   }
