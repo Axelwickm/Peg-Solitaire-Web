@@ -908,8 +908,8 @@
 				inset: 8px;
 				z-index: 3;
 				display: grid;
-				grid-template-rows: auto 1fr;
-				gap: 0.35rem;
+				grid-template-rows: auto auto auto auto;
+				gap: 0.5rem;
 				background: rgba(255, 255, 255, 0.96);
 				border-radius: 12px;
 				padding: 0.75rem 1rem 1rem;
@@ -936,6 +936,9 @@
 				transform: none;
 				pointer-events: auto;
 			}
+			.buy-panel {
+				touch-action: pan-y;
+			}
 			.buy-header {
 				display: flex;
 				align-items: center;
@@ -957,103 +960,123 @@
 				opacity: 0.65;
 				white-space: nowrap;
 			}
-			.buy-grid {
+			.buy-feature {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 0.45rem;
+			}
+			.buy-feature-button {
+				--feature-size: calc(min(320px, 55vw) * 0.8);
+				width: var(--feature-size);
+				aspect-ratio: 1 / 1;
+				display: block;
+				margin: 0 auto;
+				border-radius: 28px;
+				border: 1px solid rgba(0, 0, 0, 0.1);
+				background: rgba(250, 250, 250, 0.85);
 				position: relative;
 				overflow: hidden;
-				border-radius: 12px;
-				border: 1px solid rgba(0, 0, 0, 0.08);
-				background: #ffffff;
-				mask-image: linear-gradient(#000, #000);
-				touch-action: none;
+				cursor: pointer;
+				padding: 0;
+				box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+				transition: transform 0.25s ease, box-shadow 0.25s ease;
 			}
-			body.theme-dark .buy-grid {
-				border-color: rgba(255, 255, 255, 0.1);
-				background: #ffffff;
-				border-radius: 15%;
-			}
-			body.theme-light .buy-grid,
-			body.theme-rose .buy-grid {
-				border-radius: 15%;
-			}
-			.buy-track {
-				position: absolute;
-				top: 0;
-				left: 0;
-				will-change: transform;
-			}
-			.buy-card {
-				position: absolute;
-				width: calc(var(--hex-edge) * 2);
-				height: calc(var(--hex-edge) * 1.732);
-				display: block;
-				clip-path: none;
-				overflow: visible;
-				background: transparent;
-				border: none;
-				text-decoration: none;
-				color: inherit;
-				box-shadow: none;
-				transition: transform 0.15s ease;
-				cursor: grab;
-			}
-			.buy-card:hover,
-			.buy-card:focus-visible {
-				transform: translateY(-4px) scale(1.02);
+			.buy-feature-button:hover,
+			.buy-feature-button:focus-visible {
+				transform: translateY(-2px);
+				box-shadow: 0 14px 35px rgba(0, 0, 0, 0.3);
 				outline: none;
 			}
-			body.theme-dark .buy-card {
-				background: transparent;
-				border: none;
-				box-shadow: none;
+			body.theme-dark .buy-feature-button {
+				background: rgba(17, 19, 27, 0.9);
+				border: 1px solid rgba(255, 255, 255, 0.1);
 			}
-			.buy-image {
-				position: absolute;
-				top: 8%;
-				left: 50%;
-				width: var(--hex-edge);
-				height: var(--hex-edge);
-				transform: translateX(-50%);
-				background-size: contain;
-				background-repeat: no-repeat;
-				background-position: center;
-				transition: transform 0.5s ease;
-			}
-			.buy-title {
-				position: absolute;
-				left: 0;
-				right: 0;
-				top: calc(0% + var(--hex-edge) - 12px);
-				bottom: 26px;
-				display: flex;
-				align-items: center;
-				justify-content: center;
-				padding: 0.4rem 0.5rem 0.6rem;
-				font-weight: 400;
-				letter-spacing: 0.03em;
-				font-size: calc(0.82rem * var(--card-scale, 1));
-				color: #0f1116;
-				text-align: center;
-				max-width: calc(var(--hex-edge) * 1.2);
-				margin: 0 auto;
-				transition: opacity 0.15s ease;
-			}
-			.buy-card:hover .buy-image,
-			.buy-card:focus-visible .buy-image {
-				transform: translateX(-50%) scale(1.12);
-			}
-			.buy-message {
+			.buy-feature-image {
 				position: absolute;
 				inset: 0;
+				background-size: cover;
+				background-position: center;
+				transition: transform 0.45s ease;
+			}
+			.buy-feature-button:hover .buy-feature-image,
+			.buy-feature-button:focus-visible .buy-feature-image {
+				transform: scale(1.05);
+			}
+			.buy-feature-title {
+				font-size: 0.9rem;
+				text-align: center;
+				font-weight: 600;
+				letter-spacing: 0.05em;
+			}
+			.buy-carousel {
+				position: relative;
+				overflow-x: auto;
+				overflow-y: visible;
+				padding: 0.4rem 0 0.8rem;
+				scroll-behavior: smooth;
+				scrollbar-width: none;
+			}
+			.buy-carousel::-webkit-scrollbar {
+				display: none;
+			}
+			.buy-carousel-track {
 				display: flex;
 				align-items: center;
-				justify-content: center;
+				gap: 0.5rem;
+				padding: 0 1rem;
+				min-width: max-content;
+				position: relative;
+				z-index: 1;
+			}
+			.buy-thumb {
+				width: 64px;
+				height: 64px;
+				border-radius: 18px;
+				border: 1px solid rgba(0, 0, 0, 0.15);
+				background-size: cover;
+				background-position: center;
+				background-repeat: no-repeat;
+				padding: 0;
+				cursor: pointer;
+				flex: 0 0 auto;
+				position: relative;
+				transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+			}
+			.buy-thumb::after {
+				content: '';
+				position: absolute;
+				inset: 0;
+				border-radius: inherit;
+				box-shadow: inset 0 0 0 0 rgba(0, 0, 0, 0);
+				transition: box-shadow 0.2s ease;
+			}
+			.buy-thumb:hover,
+			.buy-thumb:focus-visible {
+				transform: translateY(-2px);
+				outline: none;
+			}
+			.buy-thumb.active {
+				border-color: var(--solved-border);
+				box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+			}
+			body.theme-dark .buy-thumb {
+				border-color: rgba(255, 255, 255, 0.1);
+			}
+			body.theme-dark .buy-thumb.active {
+				border-color: var(--solved-border);
+				box-shadow: 0 8px 25px rgba(0, 0, 0, 0.6);
+			}
+			.buy-message {
+				border-radius: 10px;
+				padding: 0.6rem 0.75rem;
 				font-size: 0.85rem;
-				letter-spacing: 0.06em;
-				background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(250, 252, 255, 0.9));
+				text-align: center;
+				background: rgba(255, 255, 255, 0.8);
 				color: rgba(30, 32, 40, 0.9);
 			}
 			body.theme-dark .buy-message {
-				background: linear-gradient(180deg, rgba(16, 18, 26, 0.9), rgba(12, 13, 19, 0.9));
+				background: rgba(16, 18, 26, 0.9);
 				color: rgba(237, 241, 255, 0.86);
 			}
 			.buy-message.hidden {
@@ -1252,10 +1275,16 @@
 						<div></div>
 						<div class="buy-status" id="buy-status">Loading store…</div>
 					</div>
-					<div class="buy-grid" id="buy-grid">
-						<div class="buy-track" id="buy-track"></div>
-						<div class="buy-message" id="buy-message">Loading products…</div>
+					<div class="buy-feature">
+						<button id="buy-feature-button" class="buy-feature-button" type="button" aria-label="Open product">
+							<div class="buy-feature-image" id="buy-feature-image" aria-hidden="true"></div>
+						</button>
+						<div class="buy-feature-title" id="buy-feature-title">Loading…</div>
 					</div>
+					<div class="buy-carousel" id="buy-carousel">
+						<div class="buy-carousel-track" id="buy-carousel-track"></div>
+					</div>
+					<div class="buy-message" id="buy-message">Loading products…</div>
 				</div>
 			</div>
 			<div class="menu-panel right">
