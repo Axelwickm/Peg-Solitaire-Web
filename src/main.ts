@@ -156,6 +156,14 @@ function updateActionVisibility(context?: {
 function handleDirectMenuQuery(): void {
   const params = new URLSearchParams(window.location.search);
   const show = params.get('show');
+  if (show === 'contact') {
+    params.delete('show');
+    const search = params.toString();
+    const newUrl = `${window.location.pathname}${search ? `?${search}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, document.title, newUrl);
+    document.dispatchEvent(new Event('footer:show-contact'));
+    return;
+  }
   const menuButtons: Record<string, HTMLButtonElement | null> = {
     buy: isMainSite ? buyMenuButton : null,
     info: infoMenuButton,

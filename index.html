@@ -53,6 +53,7 @@
 				--page-bg-from: #fefefe;
 				--page-bg-to: #e9edf0;
 				--text-color: #1b1b1f;
+				--footer-link-color: rgba(0, 0, 0, 0.55);
 				--board-radial-from: rgba(163, 97, 22, 0.9);
 				--board-radial-to: rgba(90, 47, 22, 0.95);
 				--board-bg-color: #5a2f16;
@@ -106,6 +107,7 @@
 				--drop-circle-color: rgba(255, 255, 255, 0.9);
 				--pickup-pulse-color: rgba(255, 255, 255, 0.95);
 				background: linear-gradient(180deg, var(--page-bg-from), var(--page-bg-to));
+				--footer-link-color: rgba(255, 255, 255, 0.6);
 			}
 			body.theme-rose {
 				--page-bg-from: #fffdfd;
@@ -122,6 +124,7 @@
 				--pickup-pulse-color: rgba(255, 220, 235, 0.75);
 				background: radial-gradient(circle at top, #ffffff, #faedf3);
 				color: var(--text-color);
+				--footer-link-color: rgba(75, 31, 44, 0.65);
 			}
 			h1 {
 				margin: 0;
@@ -966,10 +969,11 @@
 				align-items: center;
 				gap: 0.45rem;
 			}
-			.buy-feature-button {
-				--feature-size: calc(min(320px, 55vw) * 0.8);
-				width: var(--feature-size);
-				aspect-ratio: 1 / 1;
+				.buy-feature-button {
+					--feature-size: clamp(120px, 45vw, 280px);
+					width: var(--feature-size);
+					max-width: 320px;
+					aspect-ratio: 1 / 1;
 				display: block;
 				margin: 0 auto;
 				border-radius: 28px;
@@ -1003,35 +1007,38 @@
 			.buy-feature-button:focus-visible .buy-feature-image {
 				transform: scale(1.05);
 			}
-			.buy-feature-title {
-				font-size: 0.9rem;
+				.buy-feature-title {
+					font-size: 0.75rem;
 				text-align: center;
 				font-weight: 600;
 				letter-spacing: 0.05em;
 			}
-			.buy-carousel {
-				position: relative;
-				overflow-x: auto;
-				overflow-y: visible;
-				padding: 0.4rem 0 0.8rem;
-				scroll-behavior: smooth;
-				scrollbar-width: none;
-			}
+				.buy-carousel {
+					position: relative;
+					display: flex;
+					justify-content: center;
+					overflow-x: auto;
+					overflow-y: visible;
+					padding: 0.4rem 0 0.8rem;
+					scroll-behavior: smooth;
+					scrollbar-width: none;
+				}
 			.buy-carousel::-webkit-scrollbar {
 				display: none;
 			}
-			.buy-carousel-track {
-				display: flex;
-				align-items: center;
-				gap: 0.5rem;
-				padding: 0 1rem;
-				min-width: max-content;
-				position: relative;
-				z-index: 1;
-			}
-			.buy-thumb {
-				width: 64px;
-				height: 64px;
+				.buy-carousel-track {
+					display: flex;
+					align-items: center;
+					gap: 0.5rem;
+					padding: 0 1rem;
+					min-width: max-content;
+					position: relative;
+					z-index: 1;
+					justify-content: center;
+				}
+				.buy-thumb {
+					width: clamp(48px, 6vw, 64px);
+					height: clamp(48px, 6vw, 64px);
 				border-radius: 18px;
 				border: 1px solid rgba(0, 0, 0, 0.15);
 				background-size: cover;
@@ -1225,6 +1232,95 @@
 					margin-bottom: 0.25rem;
 				}
 			}
+			.site-footer {
+				position: fixed;
+				bottom: 0.5rem;
+				right: 1rem;
+				font-size: 0.65rem;
+				color: var(--footer-link-color);
+				padding: 0.2rem 0;
+				line-height: 1.2;
+				text-align: right;
+				letter-spacing: 0.02em;
+				opacity: 0.8;
+				z-index: 5;
+				width: auto;
+				max-width: 100%;
+				display: flex;
+				gap: 0.35rem;
+				align-items: center;
+				justify-content: flex-end;
+			}
+			.site-footer-button {
+				background: none;
+				border: none;
+				padding: 0;
+				font: inherit;
+				color: var(--footer-link-color);
+				cursor: pointer;
+				letter-spacing: 0.05em;
+			}
+			.site-footer a,
+			.site-footer-button {
+				text-decoration: none;
+				color: var(--footer-link-color);
+			}
+			.site-footer-button:hover,
+			.site-footer a:hover {
+				text-decoration: underline;
+			}
+			.contact-modal {
+				position: fixed;
+				inset: 0;
+				display: none;
+				align-items: center;
+				justify-content: center;
+				background: rgba(0, 0, 0, 0.45);
+				padding: 1rem;
+				z-index: 10;
+			}
+			.contact-modal.active {
+				display: flex;
+			}
+			.contact-modal__panel {
+				background: rgba(255, 255, 255, 0.97);
+				color: #1b1b1b;
+				padding: 1.25rem 1.5rem;
+				border-radius: 16px;
+				box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+				max-width: 320px;
+				width: 100%;
+				text-align: left;
+				position: relative;
+				font-size: 0.85rem;
+			}
+			.contact-modal__panel h3 {
+				margin: 0 0 0.35rem;
+				font-size: 0.95rem;
+				letter-spacing: 0.2em;
+				text-transform: uppercase;
+			}
+			.contact-modal__panel p {
+				margin: 0.25rem 0;
+			}
+			.contact-modal__spacer {
+				height: 0.35rem;
+			}
+			.contact-modal__close {
+				position: absolute;
+				right: 0.35rem;
+				top: 0.35rem;
+				border: none;
+				background: none;
+				font-size: 1rem;
+				color: inherit;
+				cursor: pointer;
+				padding: 0.25rem;
+			}
+			body.theme-dark .contact-modal__panel {
+				background: rgba(18, 20, 28, 0.98);
+				color: #f8f8ff;
+			}
 		</style>
 	</head>
 	<body>
@@ -1352,6 +1448,49 @@
 						updateLabel();
 						});
 						})();
+		</script>
+		<footer class="site-footer">
+			<button class="site-footer-button" id="footer-contact" type="button">Contact</button>
+			·
+			<a href="https://github.com/Axelwickm/Peg-Solitaire-Web" target="_blank" rel="noreferrer noopener">Source</a>
+		</footer>
+		<div class="contact-modal" id="contact-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="contact-modal-title">
+			<div class="contact-modal__panel">
+				<button class="contact-modal__close" type="button" aria-label="Close contact info">&times;</button>
+				<h3 id="contact-modal-title">About</h3>
+				<p>PegSolitaire.fun is a clean browser version of the classic peg solitaire puzzle, built as a personal project to make the game easy to play on any device. The site also links to a few physical boards for players who want to buy a real set.</p>
+				<div class="contact-modal__spacer" aria-hidden="true"></div>
+				<h3>Contact</h3>
+				<p>Axel Wickman</p>
+				<p>Lisbon, Portugal</p>
+				<p><a href="mailto:axelwickm@gmail.com">axelwickm@gmail.com</a></p>
+			</div>
+		</div>
+		<script>
+			(() => {
+				const contactButton = document.getElementById('footer-contact');
+				const contactModal = document.getElementById('contact-modal');
+				const closeButton = contactModal?.querySelector('.contact-modal__close');
+				const toggle = show => {
+					if (!contactModal) return;
+					contactModal.classList.toggle('active', show);
+					contactModal.setAttribute('aria-hidden', show ? 'false' : 'true');
+				};
+				const showContact = () => toggle(true);
+				contactButton?.addEventListener('click', showContact);
+				closeButton?.addEventListener('click', () => toggle(false));
+				contactModal?.addEventListener('click', event => {
+					if (event.target === contactModal && contactModal.classList.contains('active')) {
+						toggle(false);
+					}
+				});
+				document.addEventListener('footer:show-contact', showContact);
+				document.addEventListener('keydown', event => {
+					if (event.key === 'Escape' && contactModal?.classList.contains('active')) {
+						toggle(false);
+					}
+				});
+			})();
 		</script>
 		<script type="module" src="./main.js" crossorigin="anonymous"></script>
 		<script>
