@@ -41,7 +41,7 @@
 				--peg-light-target-x: 10;
 				--peg-light-target-y: -4;
 				--menu-line-color: #d0d2d7;
-				--hex-edge: 170px;
+				--hex-edge: clamp(100px, 5vw, 120px);
 			}
 			body {
 				margin: 0;
@@ -69,6 +69,7 @@
 				--solved-badge-color: #fff;
 				--drop-circle-color: rgba(255, 255, 255, 0.85);
 				--pickup-pulse-color: rgba(255, 255, 255, 0.9);
+				--peg-size: clamp(30px, 4vw, 42px);
 			}
 			body.theme-light {
 				--page-bg-from: #ffffff;
@@ -121,7 +122,7 @@
 				position: relative;
 				display: flex;
 				align-items: center;
-				height: clamp(200px, 28vw, 260px);
+				height: 240px;
 				padding-left: clamp(12px, 2vw, 20px);
 				min-width: 120px;
 				user-select: none;
@@ -466,8 +467,8 @@
 			}
 			.peg {
 				position: relative;
-				width: 35px;
-				height: 35px;
+				width: var(--peg-size);
+				height: var(--peg-size);
 				aspect-ratio: 1 / 1;
 				border-radius: 50%;
 				background: url('static/ball.webp') center/contain no-repeat;
@@ -484,7 +485,7 @@
 			.peg::before {
 				content: '';
 				position: absolute;
-				inset: -12px;
+				inset: calc(var(--peg-size) * -0.34);
 				border-radius: 50%;
 				filter: blur(16px);
 				mix-blend-mode: screen;
@@ -546,6 +547,7 @@
 				min-height: 1.5rem;
 				width: 100%;
 				text-align: center;
+				margin-bottom: 50px;
 			}
 			.board-actions,
 			.bottom-controls,
@@ -878,7 +880,6 @@
 				border-radius: 12px;
 				border: 1px solid rgba(0, 0, 0, 0.08);
 				background: #ffffff;
-				min-height: 380px;
 				mask-image: linear-gradient(#000, #000);
 				touch-action: none;
 			}
@@ -1020,6 +1021,8 @@
 					gap: 0.65rem;
 				}
 				.menu-panel .menu-items button {
+					/* Menu line, disabled */
+					display: none;
 					width: 12px;
 					height: 3px;
 					padding: 0;
@@ -1179,10 +1182,10 @@
 			if ('serviceWorker' in navigator) {
 				window.addEventListener('load', () => {
 					navigator.serviceWorker
-						.register('./sw.js', { scope: './' })
-						.catch(error => console.error('SW registration failed', error));
-				});
-			}
+					.register('./sw.js', { scope: './' })
+					.catch(error => console.error('SW registration failed', error));
+					});
+				}
 		</script>
 	</body>
 </html>

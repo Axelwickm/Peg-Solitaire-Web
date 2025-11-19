@@ -151,11 +151,8 @@ export class KongmingGame {
     }
     this.boardEl.innerHTML = '';
     this.holePositions.clear();
-    const pegSize = this.calculatePegSize();
-    this.pegSizePx = pegSize;
-    this.boardEl.style.setProperty('--peg-size', `${pegSize}px`);
-    this.boardEl.style.setProperty('--hole-size', `${pegSize * 0.25}px`);
-    this.holeHitRadius = Math.max(pegSize * 0.8, 24);
+    this.boardEl.style.setProperty('--hole-size', `${20}px`);
+    this.holeHitRadius = 100;
     this.updatePegLightTarget();
     this.updatePickablePegs();
     const targetHoles = this.selected ? this.getSelectableTargets(this.selected) : new Set<string>();
@@ -717,22 +714,6 @@ export class KongmingGame {
       x: this.pegLightTargetX,
       y: this.pegLightTargetY
     };
-  }
-
-  private calculatePegSize(): number {
-    const rect = this.boardEl.getBoundingClientRect();
-    const fallbackWidth = parseFloat(getComputedStyle(this.boardEl).width) || 320;
-    const fallbackHeight = parseFloat(getComputedStyle(this.boardEl).height) || 320;
-    const baseSize = Math.min(rect.width || fallbackWidth, rect.height || fallbackHeight);
-    let effectiveWidth = this.currentShape.width;
-    if (this.currentShape.layout === 'triangle') {
-      const counts = [...this.rowHoleCount.values()];
-      effectiveWidth = counts.length ? Math.max(...counts) : 1;
-    }
-    const maxDimension = Math.max(effectiveWidth, this.currentShape.height);
-    const rawSize = baseSize / (maxDimension + 0.5);
-    const scaledSize = rawSize * 0.6;
-    return Math.min(62, Math.max(40, scaledSize));
   }
 
   private getHolePosition(row: number, col: number): { x: number; y: number } {

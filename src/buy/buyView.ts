@@ -95,7 +95,8 @@ class ProductScroller {
   private layout(): void {
     const cards = Array.from(this.track.children) as HTMLElement[];
     if (!cards.length || !this.products.length) return;
-    const hexEdge = 170;
+    const hexEdge = this.calculateHexEdge();
+    this.container.style.setProperty('--hex-edge', `${hexEdge}px`);
     const hexWidth = hexEdge * 2;
     const hexHeight = hexEdge * Math.sqrt(3);
     const xSpacing = hexWidth * 0.75;
@@ -124,6 +125,13 @@ class ProductScroller {
       this.cameraY = (this.tileHeight * this.tilesY) / 2;
     }
     this.applyTransform();
+  }
+
+  private calculateHexEdge(): number {
+    const minEdge = 120;
+    const maxEdge = 170;
+    const viewportEdge = window.innerWidth * 0.3;
+    return Math.min(maxEdge, Math.max(minEdge, viewportEdge));
   }
 
   private tick(timestamp: number): void {
