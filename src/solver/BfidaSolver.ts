@@ -1480,14 +1480,12 @@ export class BidirectionalBfidaSolver {
     const initClass = this.context.positionClassKey(initialState);
     const goalClass = this.context.positionClassKey(goalState);
     if (!this.context.haveMatchingPositionClasses(initialState, goalState)) {
-      console.warn(
-        '[Solver] Position class mismatch detected; continuing search anyway (expect slower solve).',
-        {
-          target,
-          initialClass: initClass,
-          goalClass: goalClass,
-        },
-      );
+      console.warn('[Solver] Position class mismatch; instance unsolvable.', {
+        target,
+        initialClass: initClass,
+        goalClass: goalClass,
+      });
+      return null;
     }
     const targetType = this.context.pegType(targetIndex);
     const goalTypeCounts: PegTypeCounts = [0, 0, 0, 0];

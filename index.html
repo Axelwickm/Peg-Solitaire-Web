@@ -4,7 +4,7 @@
 		<meta charset="UTF-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
 
-		<title>Peg Solitaire Online (Kongming Chess)</title>
+		<title>Peg Solitaire Online</title>
 
 		<meta name="description" content="Play Peg solitaire free in your browser. classic, cross, and triangle boards with clean controls, sleek themes, instant reset, and an auto-solver.">
 
@@ -969,11 +969,11 @@
 				align-items: center;
 				gap: 0.45rem;
 			}
-				.buy-feature-button {
-					--feature-size: clamp(120px, 45vw, 280px);
-					width: var(--feature-size);
-					max-width: 320px;
-					aspect-ratio: 1 / 1;
+			.buy-feature-button {
+				--feature-size: clamp(120px, 45vw, 280px);
+				width: var(--feature-size);
+				max-width: 320px;
+				aspect-ratio: 1 / 1;
 				display: block;
 				margin: 0 auto;
 				border-radius: 28px;
@@ -1007,38 +1007,38 @@
 			.buy-feature-button:focus-visible .buy-feature-image {
 				transform: scale(1.05);
 			}
-				.buy-feature-title {
-					font-size: 0.75rem;
+			.buy-feature-title {
+				font-size: 0.75rem;
 				text-align: center;
 				font-weight: 600;
 				letter-spacing: 0.05em;
 			}
-				.buy-carousel {
-					position: relative;
-					display: flex;
-					justify-content: center;
-					overflow-x: auto;
-					overflow-y: visible;
-					padding: 0.4rem 0 0.8rem;
-					scroll-behavior: smooth;
-					scrollbar-width: none;
-				}
+			.buy-carousel {
+				position: relative;
+				display: flex;
+				justify-content: center;
+				overflow-x: auto;
+				overflow-y: visible;
+				padding: 0.4rem 0 0.8rem;
+				scroll-behavior: smooth;
+				scrollbar-width: none;
+			}
 			.buy-carousel::-webkit-scrollbar {
 				display: none;
 			}
-				.buy-carousel-track {
-					display: flex;
-					align-items: center;
-					gap: 0.5rem;
-					padding: 0 1rem;
-					min-width: max-content;
-					position: relative;
-					z-index: 1;
-					justify-content: center;
-				}
-				.buy-thumb {
-					width: clamp(48px, 6vw, 64px);
-					height: clamp(48px, 6vw, 64px);
+			.buy-carousel-track {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				padding: 0 1rem;
+				min-width: max-content;
+				position: relative;
+				z-index: 1;
+				justify-content: center;
+			}
+			.buy-thumb {
+				width: clamp(48px, 6vw, 64px);
+				height: clamp(48px, 6vw, 64px);
 				border-radius: 18px;
 				border: 1px solid rgba(0, 0, 0, 0.15);
 				background-size: cover;
@@ -1242,7 +1242,7 @@
 				line-height: 1.2;
 				text-align: right;
 				letter-spacing: 0.02em;
-				opacity: 0.8;
+				opacity: 1.0;
 				z-index: 5;
 				width: auto;
 				max-width: 100%;
@@ -1332,108 +1332,126 @@
 				}
 				})();
 		</script>
-		<h1>Peg Solitaire</h1>
-		<div id="status"></div>
-		<div class="content-row">
-			<div class="menu-panel left">
-				<div class="menu-label" aria-live="polite"></div>
-				<div class="menu-line"></div>
-				<div class="menu-items">
-					<button class="menu-item" type="button" data-menu="board">Board</button>
-					<button class="menu-item" type="button" data-menu="info">Info</button>
-					<button class="menu-item" type="button" data-menu="buy">Buy</button>
+		<main>
+			<h1>Peg Solitaire</h1>
+			<div id="status"></div>
+			<div class="content-row">
+				<div class="menu-panel left">
+					<div class="menu-label" role="status" aria-live="polite"></div>
+					<div class="menu-line"></div>
+					<div class="menu-items">
+						<button class="menu-item" type="button" data-menu="board">Board</button>
+						<button class="menu-item" type="button" data-menu="info">Info</button>
+						<button class="menu-item" type="button" data-menu="buy">Buy</button>
+					</div>
+					<div class="menu-handle"></div>
 				</div>
-				<div class="menu-handle"></div>
-			</div>
-			<div class="board-wrapper">
-				<div class="board-background" aria-hidden="true"></div>
-				<div id="board" aria-label="Peg Solitaire board showing the standard cross layout"></div>
-				<svg class="solver-overlay" aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
-				<div class="win-overlay" aria-hidden="true"></div>
-				<div id="info-panel" class="info-panel panel-rounded" aria-live="polite">
-					<h2>What is Peg Solitaire?</h2>
-					<p>
-						Peg Solitaire is a solo jump puzzle, also known as Kongming chess, Solo Noble, Solo Goli, Marble Solitaire, or simply Solitaire, where you hop one peg over a neighbor into an empty hole, remove the jumped peg, and keep going.
-					</p>
-					<p>
-						You start with every allowed hole filled except the center. Chain straight-line jumps until only one peg remains—ideally back in the middle. Helper hints and the auto-solver can steer you toward clean runs.
-					</p>
-					<p>
-						The first printed mention shows up in 1697 at Louis XIV's court, where Mercure galant outlined the cross board, rules, and sample drills.
-					</p>
-					<div class="info-links">
-						<a href="https://en.wikipedia.org/wiki/Peg_solitaire" target="_blank" rel="noreferrer" title="Read more on Wikipedia">Read more on Wikipedia</a>
-						<a href="https://github.com/Axelwickm/Kongming-Chess-Web" target="_blank" rel="noreferrer" title="View this build on GitHub">View this build on GitHub</a>
+				<div class="board-wrapper">
+					<div class="board-background" aria-hidden="true"></div>
+					<div id="board" role="application" aria-label="Peg Solitaire board showing the standard cross layout"></div>
+					<svg class="solver-overlay" aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+					<div class="win-overlay" aria-hidden="true"></div>
+					<div id="info-panel"
+					     class="info-panel panel-rounded"
+					     role="region"
+					     aria-live="polite"
+					     aria-label="Peg Solitaire overview"
+					>
+						<h2>What is Peg Solitaire?</h2>
+						<p>
+							Peg Solitaire is a solo jump puzzle, also known as Kongming chess, Solo Noble, Solo Goli, Marble Solitaire, or simply Solitaire, where you hop one peg over a neighbor into an empty hole, remove the jumped peg, and keep going.
+						</p>
+						<p>
+							You start with every allowed hole filled except the center. Chain straight-line jumps until only one peg remains—ideally back in the middle. Helper hints and the auto-solver can steer you toward clean runs.
+						</p>
+						<p>
+							The first printed mention shows up in 1697 at Louis XIV's court, where Mercure galant outlined the cross board, rules, and sample drills.
+						</p>
+						<div class="info-links">
+							<a href="https://en.wikipedia.org/wiki/Peg_solitaire" target="_blank" rel="noreferrer" title="Read more on Wikipedia">Read more on Wikipedia</a>
+							<a href="https://github.com/Axelwickm/Kongming-Chess-Web" target="_blank" rel="noreferrer" title="View this build on GitHub">View this build on GitHub</a>
+						</div>
+					</div>
+					<div id="buy-panel"
+					     class="buy-panel panel-rounded"
+					     role="region"
+					     aria-live="polite"
+					     aria-label="Featured store items"
+					>
+						<div class="buy-header">
+							<div></div>
+							<div class="buy-status" id="buy-status">Loading store…</div>
+						</div>
+						<div class="buy-feature">
+							<button id="buy-feature-button" class="buy-feature-button" type="button" aria-label="Open product">
+								<div class="buy-feature-image" id="buy-feature-image" aria-hidden="true"></div>
+							</button>
+							<div class="buy-feature-title" id="buy-feature-title">Loading…</div>
+						</div>
+						<div class="buy-carousel" id="buy-carousel">
+							<div class="buy-carousel-track" id="buy-carousel-track"></div>
+						</div>
+						<div class="buy-message" id="buy-message">Loading products…</div>
 					</div>
 				</div>
-				<div id="buy-panel" class="buy-panel panel-rounded" aria-live="polite">
-					<div class="buy-header">
-						<div></div>
-						<div class="buy-status" id="buy-status">Loading store…</div>
+				<div class="menu-panel right">
+					<div class="menu-label" role="status" aria-live="polite"></div>
+					<div class="menu-line"></div>
+					<div class="menu-items">
+						<button class="menu-item" type="button" data-menu="play">Play</button>
+						<!-- <button class="menu-item" type="button" data-menu="helper">Helper</button> -->
+						<button class="menu-item" type="button" data-menu="auto">Auto</button>
 					</div>
-					<div class="buy-feature">
-						<button id="buy-feature-button" class="buy-feature-button" type="button" aria-label="Open product">
-							<div class="buy-feature-image" id="buy-feature-image" aria-hidden="true"></div>
-						</button>
-						<div class="buy-feature-title" id="buy-feature-title">Loading…</div>
-					</div>
-					<div class="buy-carousel" id="buy-carousel">
-						<div class="buy-carousel-track" id="buy-carousel-track"></div>
-					</div>
-					<div class="buy-message" id="buy-message">Loading products…</div>
+					<div class="menu-handle"></div>
 				</div>
 			</div>
-			<div class="menu-panel right">
-				<div class="menu-label" aria-live="polite"></div>
-				<div class="menu-line"></div>
-				<div class="menu-items">
-					<button class="menu-item" type="button" data-menu="play">Play</button>
-					<!-- <button class="menu-item" type="button" data-menu="helper">Helper</button> -->
-					<button class="menu-item" type="button" data-menu="auto">Auto</button>
+			<div class="board-actions" id="board-actions">
+				<div class="board-buttons">
+					<button id="reset" type="button" aria-label="Reset the Peg Solitaire board">Reset</button>
+					<button id="shape" type="button" aria-label="Change board shape">Shape</button>
+					<button id="theme" type="button" aria-label="Switch theme">Theme</button>
+					<button id="undo" type="button" aria-label="Undo last move">Undo</button>
 				</div>
-				<div class="menu-handle"></div>
 			</div>
-		</div>
-		<div class="board-actions" id="board-actions">
-			<div class="board-buttons">
-				<button id="reset" type="button" aria-label="Reset the Peg Solitaire board">Reset</button>
-				<button id="shape" type="button" aria-label="Change board shape">Shape</button>
-				<button id="theme" type="button" aria-label="Switch theme">Theme</button>
-				<button id="undo" type="button" aria-label="Undo last move">Undo</button>
-			</div>
-		</div>
-		<!-- <div class="bottom-controls hidden" id="helper-actions">
+			<!-- <div class="bottom-controls hidden" id="helper-actions">
 			<button id="hint" type="button" aria-label="Show hint for best move">Hint best move</button>
 			<button id="helper-toggle" type="button" aria-label="Toggle helper hints">Helper (off)</button>
 		</div> -->
-		<div class="auto-actions hidden" id="auto-actions">
-			<button id="auto-solve" type="button" aria-label="Auto-solve the puzzle">Solve</button>
-			<button id="auto-play" type="button" aria-label="Play the auto-solve plan">Play</button>
-		</div>
-		<div class="play-stats" id="play-stats">
-			<button id="play-timer-button" type="button" class="timer-trigger">
-				<span>Time</span>
-				<strong id="play-timer">00:00</strong>
-			</button>
-			<div class="play-stats-popup" id="play-stats-popup" aria-hidden="true">
-				<div class="popup-heading">Session history</div>
-				<div class="popup-controls">
-					<div class="legend">
-						<span><span class="dot time"></span>Time</span>
-						<span><span class="dot score"></span>Score</span>
+			<div class="auto-actions hidden" id="auto-actions">
+				<button id="auto-solve" type="button" aria-label="Auto-solve the puzzle">Solve</button>
+				<button id="auto-play" type="button" aria-label="Play the auto-solve plan">Play</button>
+			</div>
+			<div class="play-stats" id="play-stats">
+				<button id="play-timer-button" type="button" class="timer-trigger">
+					<span>Time</span>
+					<strong id="play-timer">00:00</strong>
+				</button>
+				<div class="play-stats-popup"
+				     id="play-stats-popup"
+				     role="region"
+				     aria-label="Play stats history"
+				     aria-hidden="true"
+				>
+					<div class="popup-heading">Session history</div>
+					<div class="popup-controls">
+						<div class="legend">
+							<span><span class="dot time"></span>Time</span>
+							<span><span class="dot score"></span>Score</span>
+						</div>
+						<div class="shape-filter">
+							<label for="stats-shape-filter">Shape</label>
+							<select id="stats-shape-filter"></select>
+						</div>
 					</div>
-					<div class="shape-filter">
-						<label for="stats-shape-filter">Shape</label>
-						<select id="stats-shape-filter"></select>
+					<svg id="stats-graph" viewBox="0 0 320 160" aria-label="Play stats graph" role="img"></svg>
+					<div class="popup-footer">
+						<span id="play-stats-count">Games played: 0</span>
+						<button id="export-stats" type="button">Export to CSV</button>
 					</div>
-				</div>
-				<svg id="stats-graph" viewBox="0 0 320 160" aria-label="Play stats graph"></svg>
-				<div class="popup-footer">
-					<span id="play-stats-count">Games played: 0</span>
-					<button id="export-stats" type="button">Export to CSV</button>
 				</div>
 			</div>
-		</div>
+		</main>
+
 		<script>
 			(() => {
 				const panels = Array.from(document.querySelectorAll('.menu-panel'));
@@ -1475,22 +1493,22 @@
 					if (!contactModal) return;
 					contactModal.classList.toggle('active', show);
 					contactModal.setAttribute('aria-hidden', show ? 'false' : 'true');
-				};
-				const showContact = () => toggle(true);
-				contactButton?.addEventListener('click', showContact);
-				closeButton?.addEventListener('click', () => toggle(false));
-				contactModal?.addEventListener('click', event => {
-					if (event.target === contactModal && contactModal.classList.contains('active')) {
-						toggle(false);
-					}
-				});
-				document.addEventListener('footer:show-contact', showContact);
-				document.addEventListener('keydown', event => {
-					if (event.key === 'Escape' && contactModal?.classList.contains('active')) {
-						toggle(false);
-					}
-				});
-			})();
+					};
+					const showContact = () => toggle(true);
+					contactButton?.addEventListener('click', showContact);
+					closeButton?.addEventListener('click', () => toggle(false));
+					contactModal?.addEventListener('click', event => {
+						if (event.target === contactModal && contactModal.classList.contains('active')) {
+							toggle(false);
+						}
+						});
+						document.addEventListener('footer:show-contact', showContact);
+						document.addEventListener('keydown', event => {
+							if (event.key === 'Escape' && contactModal?.classList.contains('active')) {
+								toggle(false);
+							}
+							});
+							})();
 		</script>
 		<script type="module" src="./main.js" crossorigin="anonymous"></script>
 		<script>

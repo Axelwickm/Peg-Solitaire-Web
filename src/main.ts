@@ -1,7 +1,7 @@
 import { KongmingGame } from './Game';
 import { initPlayStats } from './playStats';
 import { createMenuControls } from './menu/menuControls';
-import { shapes } from './shapes';
+import { BoardShape, shapes } from './shapes';
 
 const isMainSite = Boolean(MAIN_SITE);
 
@@ -10,6 +10,11 @@ const statusEl = document.getElementById('status');
 const boardWrapper = document.querySelector('.board-wrapper');
 const buyMenuButton = document.querySelector<HTMLButtonElement>('.menu-item[data-menu="buy"]');
 const buyPanel = document.getElementById('buy-panel');
+const getBoardLabel = (shape: BoardShape): string =>
+  `Peg Solitaire board showing the ${shape.name} layout`;
+const updateBoardAriaLabel = (shape: BoardShape): void => {
+  boardEl?.setAttribute('aria-label', getBoardLabel(shape));
+};
 if (!isMainSite) {
   buyMenuButton?.remove();
   buyPanel?.remove();
@@ -58,6 +63,7 @@ const game = new KongmingGame(
   boardWrapper as HTMLElement,
   shapes[currentShapeIndex],
 );
+updateBoardAriaLabel(shapes[currentShapeIndex]);
 const playStatsController = initPlayStats(game);
 const solverOverlay = document.querySelector<SVGSVGElement>('.solver-overlay');
 if (solverOverlay) {
@@ -300,6 +306,7 @@ function cycleShape(): void {
   }
   currentShapeIndex = nextIndex;
   game.changeShape(nextShape);
+  updateBoardAriaLabel(nextShape);
   localStorage.setItem('kongming-shape', shapes[currentShapeIndex].id);
   resetAutoSolveState();
   playStatsController?.refreshShapeFilter(shapes[currentShapeIndex].id);
