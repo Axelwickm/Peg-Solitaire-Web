@@ -7,6 +7,7 @@ import {
   SolverSessionProgress,
   SolverOptions,
 } from './solver/BfidaSolver';
+import { solveCrossWithAi, AiSolverAbortError } from './solver/AiSolver';
 
 const SOLVER_STALL_TIMEOUT_MS = 120000;
 const SOLVER_PERFECT_EXTRA_MS = 1000;
@@ -88,6 +89,8 @@ export class KongmingGame {
   private playResultLogged = false;
   private highScoreActive = false;
   private autoSolveUsed = false;
+  private aiModeEnabled = false;
+  private aiSolveAbortController: AbortController | null = null;
   private readonly playLogKey = 'kongming-play-log';
   private readonly bestPlayKey = 'kongming-play-best';
   private bestPlayEntry: PlayLogEntry | null = null;
@@ -147,6 +150,19 @@ export class KongmingGame {
     this.playTimerEl = timerEl;
     this.bestPlayEntry = this.loadBestPlayEntry();
     this.updatePlayStatsDisplay();
+  }
+
+  public setAiMode(enabled: boolean): void {
+    if (this.aiModeEnabled === enabled) return;
+    this.aiModeEnabled = enabled;
+    this.clearSolverVisualization();
+    const suffix = this.currentShape.id === 'cross' ? '' : ' (cross board only)';
+    const status = enabled ? `AI mode enabled${suffix}` : 'AI mode disabled';
+    this.updateStatusMessage(status);
+  }
+
+  public isAiModeEnabled(): boolean {
+    return this.aiModeEnabled && this.currentShape.id === 'cross';
   }
 
   private render(): void {
@@ -882,6 +898,9 @@ export class KongmingGame {
       pegCount: this.pegs.size,
       chunkMs,
     });
+    if (this.isAiModeEnabled()) {
+      return this.startAiSolverRun();
+    }
     const solver = new BidirectionalBfidaSolver(this.allowedMoves, this.buildSolverOptions());
     const session = solver.createSession(new Set(this.pegs), this.currentShape.empty);
     if (!session) {
@@ -960,6 +979,100 @@ export class KongmingGame {
       step();
     });
     return promise;
+  }
+
+  private startAiSolverRun(): Promise<SolverResult> {
+    this.solverRunning = true;
+    this.boardWrapper.classList.add('solver-busy');
+    this.solverStartTime = performance.now();
+    this.solverInitialPegCount = this.pegs.size;
+    this.solverBestMovesLength = 0;
+    this.setStatus('AI solving…');
+    const controller = new AbortController();
+    this.aiSolveAbortController = controller;
+    const pegs = new Set(this.pegs);
+    const solverPromise = solveCrossWithAi(pegs, {
+      maxDurationMs: 60000,
+      abortSignal: controller.signal,
+    });
+    return new Promise<SolverResult>(resolve => {
+      this.solverPromiseResolve = resolve;
+      solverPromise
+        .then(result => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          const reason =
+            result.reason === 'timeout'
+              ? 'timeout'
+              : result.reason === 'exhausted'
+              ? 'exhausted'
+              : result.reason === 'failed'
+              ? 'failed'
+              : 'completed';
+          this.handleAiSolverCompletion(result, reason);
+          resolve(result);
+          this.solverPromiseResolve = null;
+        })
+        .catch(error => {
+          if (controller.signal.aborted || error instanceof AiSolverAbortError) {
+            return;
+          }
+          console.error('[UI] AI solver error', error);
+          const failure: SolverResult = {
+            solved: false,
+            moves: [],
+            bestMoves: [],
+            nodesExplored: 0,
+            durationMs: Math.max(0, performance.now() - this.solverStartTime),
+            reason: 'failed',
+          };
+          this.handleAiSolverCompletion(failure, 'failed');
+          resolve(failure);
+          this.solverPromiseResolve = null;
+        })
+        .finally(() => {
+          this.aiSolveAbortController = null;
+        });
+    });
+  }
+
+  private handleAiSolverCompletion(
+    result: SolverResult,
+    reason: 'completed' | 'timeout' | 'exhausted' | 'failed',
+  ): void {
+    this.solverRunning = false;
+    this.boardWrapper.classList.remove('solver-busy');
+    this.solverSession = null;
+    if (this.solverTimer !== null) {
+      window.clearTimeout(this.solverTimer);
+      this.solverTimer = null;
+    }
+    this.solverResult = result;
+    this.solverBestMovesLength = result.bestMoves.length;
+    if (result.bestMoves.length > 0) {
+      this.autoplayPlanVersion += 1;
+      this.autoplayKnownPlanVersion = this.autoplayPlanVersion;
+      this.autoplayMoves = [...result.bestMoves];
+      this.autoplayIndex = 0;
+    }
+    this.updateSolverLines(result.moves, result.solved ? 'lime' : 'red');
+    let status: string;
+    const nodesText =
+      result.nodesExplored > 0 ? ` · ${result.nodesExplored} evaluations` : '';
+    if (reason === 'timeout') {
+      status = `AI solver timed out after ${(result.durationMs / 1000).toFixed(1)}s${nodesText}`;
+    } else if (reason === 'exhausted') {
+      status = `AI solver exhausted search${nodesText}`;
+    } else if (reason === 'failed') {
+      status = `AI solver failed${nodesText}`;
+    } else if (result.solved) {
+      status = `AI solved in ${result.durationMs.toFixed(1)}ms${nodesText}`;
+    } else {
+      status = `AI solver finished${nodesText}`;
+    }
+    status += this.formatBestStatusSuffix();
+    this.setStatus(status);
   }
 
   private recordSolverImprovement(progress: SolverSessionProgress): void {
@@ -1044,6 +1157,10 @@ export class KongmingGame {
     const hadResult = !!this.solverResult;
     this.solverRunning = false;
     this.solverSession = null;
+    if (this.aiSolveAbortController) {
+      this.aiSolveAbortController.abort();
+      this.aiSolveAbortController = null;
+    }
     if (this.solverTimer !== null) {
       window.clearTimeout(this.solverTimer);
       this.solverTimer = null;

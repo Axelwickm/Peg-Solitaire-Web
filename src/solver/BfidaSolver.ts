@@ -10,6 +10,7 @@ export interface SolverResult {
   nodesExplored: number;
   durationMs: number;
   bestMoves: SolverMove[];
+  reason?: 'solved' | 'timeout' | 'exhausted' | 'aborted' | 'failed';
 }
 
 export interface SolverSessionProgress {

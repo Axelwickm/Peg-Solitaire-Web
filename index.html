@@ -681,6 +681,29 @@
 			body.theme-dark .auto-actions button:hover {
 				color: #ffffff;
 			}
+			.ai-mode-toggle {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				gap: 0.4rem;
+				font-size: 0.65rem;
+				text-transform: uppercase;
+				letter-spacing: 0.2em;
+				cursor: pointer;
+				user-select: none;
+			}
+			.ai-mode-toggle input {
+				width: 1rem;
+				height: 1rem;
+				accent-color: #1b1b1f;
+			}
+			body.theme-dark .ai-mode-toggle input {
+				accent-color: #f7f7ff;
+			}
+			.ai-mode-toggle.disabled {
+				opacity: 0.45;
+				cursor: not-allowed;
+			}
 			.board-actions.hidden {
 				display: none;
 			}
@@ -1456,6 +1479,10 @@
 			<button id="helper-toggle" type="button" aria-label="Toggle helper hints">Helper (off)</button>
 		</div> -->
 			<div class="auto-actions hidden" id="auto-actions">
+				<label class="ai-mode-toggle" id="ai-mode-toggle-label">
+					<input type="checkbox" id="ai-mode-toggle" />
+					<span>AI mode (cross)</span>
+				</label>
 				<button id="auto-solve" type="button" aria-label="Auto-solve the puzzle">Solve</button>
 				<button id="auto-play" type="button" aria-label="Play the auto-solve plan">Play</button>
 			</div>

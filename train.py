@@ -39,13 +39,15 @@ from numba_kernels import (
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 DEFAULT_SHAPE_ID = "cross"
-DEFAULT_REPLAY_CAPACITY = 100_000
+DEFAULT_REPLAY_CAPACITY = 1_000_000
 DEFAULT_BATCH_SIZE = 2048
 DEFAULT_LR = 1e-3
 GAMMA = 0.99
 
 NUM_EPISODES = 100_000_000
 MAX_STEPS_PER_EPISODE = 31
+COLLECT_STEPS_PER_EPOCH = 4096
+TRAIN_UPDATES_PER_EPOCH = 2048
 
 TARGET_UPDATE_INTERVAL = 1000  # episodes
 CURRICULUM_EVAL_INTERVAL = 1000
@@ -566,143 +568,193 @@ def train(
 
     end_episode = start_episode + max_episodes - 1
     last_episode = start_episode - 1
+    episode = start_episode
+    epoch_idx = 0
+    train_steps_taken = 0
 
     try:
-        for episode in range(start_episode, end_episode + 1):
-            last_episode = episode
-            epsilon = EPSILON_END + (EPSILON_START - EPSILON_END) * math.exp(
-                -1.0 * steps_done / EPSILON_DECAY
-            )
+        while episode <= end_episode:
+            epoch_idx += 1
+            collected_steps = 0
+            epoch_episode_count = 0
+            epoch_reward_total = 0.0
 
-            min_pegs = CURRICULUM_MIN_PEGS
-            max_pegs = max_curriculum_pegs
-            if max_pegs < min_pegs:
-                max_pegs = min_pegs
-            target_pegs = random.randint(min_pegs, max_pegs)
-
-            state = env.reset_with_pegs(target_pegs)
-            done = False
-            total_reward = 0.0
-            step_count = 0
-
-            while not done and step_count < MAX_STEPS_PER_EPISODE:
-                legal_mask_np = env.legal_mask_numpy()
-                if legal_mask_np.sum() == 0:
-                    reward = compute_final_reward(env, center_bonus=True)
-                    total_reward += reward
-                    done = True
-
-                    next_state = state.clone()
-                    next_legal_mask = np.zeros_like(legal_mask_np, dtype=np.bool_)
-                    replay.push(
-                        state.cpu(),
-                        -1,
-                        reward,
-                        next_state.cpu(),
-                        True,
-                        next_legal_mask,
-                    )
-                    break
-
-                search_state = env.state.astype(np.bool_, copy=True)
-                action_idx, _ = markov_search_action(
-                    q_net,
-                    search_state,
-                    env.actions,
-                    env.idx_map.get(env.empty),
-                    epsilon,
-                    replay=replay,
-                    collect_transitions=True,
+            while (
+                episode <= end_episode and collected_steps < COLLECT_STEPS_PER_EPOCH
+            ):
+                current_episode = episode
+                last_episode = current_episode
+                epsilon = EPSILON_END + (EPSILON_START - EPSILON_END) * math.exp(
+                    -1.0 * steps_done / EPSILON_DECAY
                 )
-                if action_idx < 0 or not legal_mask_np[action_idx]:
-                    action_idx = _fallback_legal_action(legal_mask_np)
-                    if action_idx < 0:
+
+                min_pegs = CURRICULUM_MIN_PEGS
+                max_pegs = max_curriculum_pegs
+                if max_pegs < min_pegs:
+                    max_pegs = min_pegs
+                target_pegs = random.randint(min_pegs, max_pegs)
+
+                state = env.reset_with_pegs(target_pegs)
+                done = False
+                total_reward = 0.0
+                step_count = 0
+
+                while not done and step_count < MAX_STEPS_PER_EPISODE:
+                    legal_mask_np = env.legal_mask_numpy()
+                    if legal_mask_np.sum() == 0:
+                        reward = compute_final_reward(env, center_bonus=True)
+                        total_reward += reward
+                        done = True
+
+                        next_state = state.clone()
+                        next_legal_mask = np.zeros_like(legal_mask_np, dtype=np.bool_)
+                        replay.push(
+                            state.cpu(),
+                            -1,
+                            reward,
+                            next_state.cpu(),
+                            True,
+                            next_legal_mask,
+                        )
+                        collected_steps += 1
                         break
 
-                next_state, reward, done = env.step(action_idx)
-                total_reward += reward
-
-                state = next_state
-                step_count += 1
-                steps_done += 1
-
-                if len(replay) >= batch_size:
-                    batch = Transition(*zip(*replay.sample(batch_size)))
-                    loss = compute_td_loss(q_net, target_net, batch)
-                    writer.add_scalar("train/loss", loss.item(), steps_done)
-                    optimizer.zero_grad()
-                    loss.backward()
-                    nn.utils.clip_grad_norm_(q_net.parameters(), max_norm=1.0)
-                    optimizer.step()
-
-            final_pegs = int(env.state.sum())
-            episode_final_pegs.append(final_pegs)
-            avg_final_pegs = (
-                sum(episode_final_pegs) / len(episode_final_pegs)
-                if episode_final_pegs
-                else final_pegs
-            )
-            writer.add_scalar("episode/reward", total_reward, episode)
-            writer.add_scalar("episode/avg_final_pegs", avg_final_pegs, episode)
-            writer.add_scalar("episode/max_initial_pegs", max_curriculum_pegs, episode)
-
-            if episode % TARGET_UPDATE_INTERVAL == 0:
-                target_net.load_state_dict(q_net.state_dict())
-                print(
-                    f"[Episode {episode}] Target network updated. "
-                    f"Last episode reward {total_reward:.2f}, final pegs {final_pegs}"
-                )
-
-            if episode % CURRICULUM_EVAL_INTERVAL == 0:
-                eval_reward, eval_final_pegs = evaluate_policy(
-                    q_net,
-                    shape_ctx,
-                    max_curriculum_pegs,
-                    episodes=EVAL_EPISODES_PER_CHECK,
-                )
-                writer.add_scalar("eval/reward", eval_reward, episode)
-                writer.add_scalar("eval/final_pegs", eval_final_pegs, episode)
-                print(
-                    f"[Eval {episode}] reward {eval_reward:.2f} avg_final_pegs {eval_final_pegs:.2f} "
-                    f"max_start_pegs {max_curriculum_pegs}"
-                )
-                if (
-                    eval_final_pegs <= AVG_FINAL_PEGS_THRESHOLD
-                    and max_curriculum_pegs < CURRICULUM_MAX_LIMIT
-                ):
-                    max_curriculum_pegs = min(
-                        max_curriculum_pegs + 1, full_pegs, CURRICULUM_MAX_LIMIT
+                    search_state = env.state.astype(np.bool_, copy=True)
+                    action_idx, _ = markov_search_action(
+                        q_net,
+                        search_state,
+                        env.actions,
+                        env.idx_map.get(env.empty),
+                        epsilon,
+                        replay=replay,
+                        collect_transitions=True,
                     )
+                    if action_idx < 0 or not legal_mask_np[action_idx]:
+                        action_idx = _fallback_legal_action(legal_mask_np)
+                        if action_idx < 0:
+                            break
+
+                    next_state, reward, done = env.step(action_idx)
+                    total_reward += reward
+
+                    state = next_state
+                    step_count += 1
+                    steps_done += 1
+                    collected_steps += 1
+
+                final_pegs = int(env.state.sum())
+                episode_final_pegs.append(final_pegs)
+                avg_final_pegs = (
+                    sum(episode_final_pegs) / len(episode_final_pegs)
+                    if episode_final_pegs
+                    else final_pegs
+                )
+                writer.add_scalar("episode/reward", total_reward, current_episode)
+                writer.add_scalar(
+                    "episode/avg_final_pegs", avg_final_pegs, current_episode
+                )
+                writer.add_scalar(
+                    "episode/max_initial_pegs", max_curriculum_pegs, current_episode
+                )
+
+                if current_episode % TARGET_UPDATE_INTERVAL == 0:
+                    target_net.load_state_dict(q_net.state_dict())
                     print(
-                        f"[Episode {episode}] Curriculum level up via eval, "
-                        f"max starting pegs is now {max_curriculum_pegs}"
+                        f"[Episode {current_episode}] Target network updated. "
+                        f"Last episode reward {total_reward:.2f}, final pegs {final_pegs}"
                     )
 
-            if episode % CHECKPOINT_SAVE_INTERVAL == 0:
-                save_checkpoint(
-                    model_path,
-                    q_net,
-                    optimizer,
-                    episode,
-                    steps_done,
-                    shape_id,
-                    tb_run_name,
-                    tb_log_dir,
-                    replay_capacity,
-                    batch_size,
-                    learning_rate,
-                    max_curriculum_pegs,
+                if current_episode % CURRICULUM_EVAL_INTERVAL == 0:
+                    eval_reward, eval_final_pegs = evaluate_policy(
+                        q_net,
+                        shape_ctx,
+                        max_curriculum_pegs,
+                        episodes=EVAL_EPISODES_PER_CHECK,
+                    )
+                    writer.add_scalar("eval/reward", eval_reward, current_episode)
+                    writer.add_scalar("eval/final_pegs", eval_final_pegs, current_episode)
+                    print(
+                        f"[Eval {current_episode}] reward {eval_reward:.2f} "
+                        f"avg_final_pegs {eval_final_pegs:.2f} "
+                        f"max_start_pegs {max_curriculum_pegs}"
+                    )
+                    if (
+                        eval_final_pegs <= AVG_FINAL_PEGS_THRESHOLD
+                        and max_curriculum_pegs < CURRICULUM_MAX_LIMIT
+                    ):
+                        max_curriculum_pegs = min(
+                            max_curriculum_pegs + 1, full_pegs, CURRICULUM_MAX_LIMIT
+                        )
+                        print(
+                            f"[Episode {current_episode}] Curriculum level up via eval, "
+                            f"max starting pegs is now {max_curriculum_pegs}"
+                        )
+
+                if current_episode % CHECKPOINT_SAVE_INTERVAL == 0:
+                    save_checkpoint(
+                        model_path,
+                        q_net,
+                        optimizer,
+                        current_episode,
+                        steps_done,
+                        shape_id,
+                        tb_run_name,
+                        tb_log_dir,
+                        replay_capacity,
+                        batch_size,
+                        learning_rate,
+                        max_curriculum_pegs,
+                    )
+
+                if current_episode % 100 == 0:
+                    avg_last = sum(episode_final_pegs) / max(len(episode_final_pegs), 1)
+                    print(
+                        f"Episode {current_episode} "
+                        f"reward {total_reward:.2f} "
+                        f"final_pegs {final_pegs} "
+                        f"avg_final_pegs_window {avg_last:.3f} "
+                        f"max_start_pegs {max_curriculum_pegs} "
+                        f"buffer_size {len(replay)} "
+                        f"epoch {epoch_idx}"
+                    )
+
+                epoch_episode_count += 1
+                epoch_reward_total += total_reward
+                episode += 1
+
+            if epoch_episode_count > 0:
+                avg_epoch_reward = epoch_reward_total / epoch_episode_count
+                print(
+                    f"[Epoch {epoch_idx}] collected {collected_steps} steps over "
+                    f"{epoch_episode_count} episodes, avg reward {avg_epoch_reward:.2f}; "
+                    f"buffer_size {len(replay)}"
                 )
 
-            if episode % 100 == 0:
-                avg_last = sum(episode_final_pegs) / max(len(episode_final_pegs), 1)
+            updates_to_run = (
+                TRAIN_UPDATES_PER_EPOCH if len(replay) >= batch_size else 0
+            )
+            epoch_training_loss = 0.0
+            for _ in range(updates_to_run):
+                batch = Transition(*zip(*replay.sample(batch_size)))
+                loss = compute_td_loss(q_net, target_net, batch)
+                writer.add_scalar("train/loss", loss.item(), train_steps_taken)
+                optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(q_net.parameters(), max_norm=1.0)
+                optimizer.step()
+                train_steps_taken += 1
+                epoch_training_loss += loss.item()
+
+            if updates_to_run == 0 and len(replay) < batch_size:
                 print(
-                    f"Episode {episode} "
-                    f"reward {total_reward:.2f} "
-                    f"final_pegs {final_pegs} "
-                    f"avg_final_pegs_window {avg_last:.3f} "
-                    f"max_start_pegs {max_curriculum_pegs} "
-                    f"buffer_size {len(replay)}"
+                    f"[Epoch {epoch_idx}] Skipped training updates "
+                    f"(buffer size {len(replay)}/{batch_size})"
+                )
+            elif updates_to_run > 0:
+                avg_train_loss = epoch_training_loss / updates_to_run
+                print(
+                    f"[Epoch {epoch_idx}] ran {updates_to_run} training updates "
+                    f"(avg loss {avg_train_loss:.3f})"
                 )
     finally:
         writer.close()
@@ -843,6 +895,51 @@ def infer(
     print(f"Inference finished ({episodes} episodes), avg reward {avg_reward:.2f}")
 
 
+def export_model(
+    shape_id: str = DEFAULT_SHAPE_ID,
+    load_path: Path | str | None = None,
+    output_path: Path | str | None = None,
+    inline_weights: bool = False,
+) -> None:
+    """Export a trained model to ONNX for browser execution."""
+    shape_ctxs = build_shape_contexts(SHAPES)
+    if shape_id not in shape_ctxs:
+        raise ValueError(f"Unknown shape '{shape_id}'")
+    shape_ctx = shape_ctxs[shape_id]
+
+    if load_path is None:
+        load_path = get_default_model_path(shape_id)
+    load_path = Path(load_path)
+    if not load_path.exists():
+        raise FileNotFoundError(f"Model checkpoint not found: {load_path}")
+
+    q_net = TokenAttentionQNetwork(shape_ctx).to("cpu")
+    checkpoint = torch.load(load_path, map_location="cpu")
+    if isinstance(checkpoint, dict) and "model_state" in checkpoint:
+        q_net.load_state_dict(checkpoint["model_state"])
+    else:
+        q_net.load_state_dict(checkpoint)
+    q_net.eval()
+
+    if output_path is None:
+        output_path = load_path.with_suffix(".onnx")
+    output_path = Path(output_path)
+
+    dummy_state = torch.zeros(1, q_net.num_holes, dtype=torch.float32)
+    torch.onnx.export(
+        q_net,
+        dummy_state,
+        output_path,
+        input_names=["state"],
+        output_names=["q_values"],
+        dynamic_axes={"state": {0: "batch"}, "q_values": {0: "batch"}},
+        opset_version=17,
+        export_params=True,
+        external_data=not inline_weights,
+    )
+    print(f"Exported ONNX model to {output_path}")
+
+
 def main() -> None:
     _TRAIN_ARGS = argparse.ArgumentParser(add_help=False)
     _TRAIN_ARGS.add_argument(
@@ -931,6 +1028,32 @@ def main() -> None:
         help="Use neural-network-guided Markov search during inference.",
     )
 
+    _EXPORT_ARGS = argparse.ArgumentParser(add_help=False)
+    _EXPORT_ARGS.add_argument(
+        "--shape",
+        "-s",
+        choices=sorted(SHAPES.keys()),
+        default=DEFAULT_SHAPE_ID,
+        help="Board shape to operate on.",
+    )
+    _EXPORT_ARGS.add_argument(
+        "--load",
+        "-l",
+        type=Path,
+        help="Path to a saved model checkpoint to export.",
+    )
+    _EXPORT_ARGS.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        help="Destination path for the exported ONNX file.",
+    )
+    _EXPORT_ARGS.add_argument(
+        "--inline",
+        action="store_true",
+        help="Store weights inside the ONNX file instead of using external data.",
+    )
+
     parser = argparse.ArgumentParser(
         description="Train or run the Kongming DQN agent.", parents=[_TRAIN_ARGS]
     )
@@ -947,6 +1070,13 @@ def main() -> None:
     )
     infer_parser.set_defaults(mode="infer")
 
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export a trained agent to ONNX for browser inference.",
+        parents=[_EXPORT_ARGS],
+    )
+    export_parser.set_defaults(mode="export")
+
     args = parser.parse_args()
 
     if args.mode == "train":
@@ -958,7 +1088,7 @@ def main() -> None:
             batch_size=args.batch,
             learning_rate=args.lr,
         )
-    else:
+    elif args.mode == "infer":
         infer(
             shape_id=args.shape,
             load_path=args.load,
@@ -967,6 +1097,13 @@ def main() -> None:
             max_pegs=args.max_pegs,
             render=args.render,
             use_search=args.search,
+        )
+    else:
+        export_model(
+            shape_id=args.shape,
+            load_path=args.load,
+            output_path=args.output,
+            inline_weights=args.inline,
         )
 
 

@@ -96,6 +96,8 @@ const playMenuButton = document.querySelector<HTMLButtonElement>('.menu-item[dat
 const boardMenuButton = document.querySelector<HTMLButtonElement>(
   '.menu-panel.left .menu-item[data-menu="board"]',
 );
+const aiModeToggle = document.getElementById('ai-mode-toggle') as HTMLInputElement | null;
+const aiModeToggleLabel = document.getElementById('ai-mode-toggle-label');
 const rightMenuPanel = document.querySelector<HTMLElement>('.menu-panel.right');
 let activeLeftMenu: string | null = 'board';
 let activeRightMenu: string | null = 'play';
@@ -251,6 +253,30 @@ if (autoPlayButton) {
   autoPlayButton.setAttribute('title', 'Coming soon');
 }
 
+function updateAiModeAvailability(): void {
+  if (!aiModeToggle) return;
+  const supportsAi = shapes[currentShapeIndex].id === 'cross';
+  aiModeToggle.disabled = !supportsAi;
+  aiModeToggleLabel?.classList.toggle('disabled', !supportsAi);
+  aiModeToggleLabel?.setAttribute(
+    'title',
+    supportsAi ? 'Use neural solver on the cross board' : 'AI mode is only available on the cross board',
+  );
+  if (!supportsAi) {
+    aiModeToggle.checked = false;
+    game.setAiMode(false);
+  } else {
+    game.setAiMode(aiModeToggle.checked);
+  }
+}
+updateAiModeAvailability();
+
+aiModeToggle?.addEventListener('change', () => {
+  if (!aiModeToggle) return;
+  game.setAiMode(aiModeToggle.checked);
+  resetAutoSolveState();
+});
+
 autoSolveButton?.addEventListener('click', () => {
   if (!autoSolveButton) return;
   if (game.isSolverActive()) {
@@ -309,6 +335,7 @@ function cycleShape(): void {
   updateBoardAriaLabel(nextShape);
   localStorage.setItem('kongming-shape', shapes[currentShapeIndex].id);
   resetAutoSolveState();
+  updateAiModeAvailability();
   playStatsController?.refreshShapeFilter(shapes[currentShapeIndex].id);
   const holeCount = nextShape.holes.length;
   const holeLabel = holeCount === 1 ? 'hole' : 'holes';

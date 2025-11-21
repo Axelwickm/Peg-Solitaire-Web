@@ -10,5 +10,8 @@
   "devDependencies": {
     "esbuild": "^0.19.2",
     "typescript": "^5.0.4"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.23.2"
   }
 }
