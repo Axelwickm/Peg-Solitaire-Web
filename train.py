@@ -27,19 +27,27 @@ from environment import (
     render_cli_state,
 )
 from dqn import TokenAttentionQNetwork
+from numba_kernels import (
+    legal_mask_kernel,
+    mask_any_kernel,
+    peg_count_kernel,
+    select_branch_actions_kernel,
+    simulate_action_kernel,
+    terminal_reward_kernel,
+)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 DEFAULT_SHAPE_ID = "cross"
-DEFAULT_REPLAY_CAPACITY = 10_000
+DEFAULT_REPLAY_CAPACITY = 100_000
 DEFAULT_BATCH_SIZE = 2048
 DEFAULT_LR = 1e-3
 GAMMA = 0.99
 
 NUM_EPISODES = 100_000_000
-MAX_STEPS_PER_EPISODE = 200
+MAX_STEPS_PER_EPISODE = 31
 
-TARGET_UPDATE_INTERVAL = 500  # episodes
+TARGET_UPDATE_INTERVAL = 1000  # episodes
 CURRICULUM_EVAL_INTERVAL = 1000
 EVAL_EPISODES_PER_CHECK = 150
 
@@ -51,7 +59,7 @@ CURRICULUM_MIN_PEGS = 3
 CURRICULUM_START_MAX_PEGS = 3
 CURRICULUM_MAX_LIMIT = 32
 CURRICULUM_WINDOW = 500
-AVG_FINAL_PEGS_THRESHOLD = 1.1
+AVG_FINAL_PEGS_THRESHOLD = 1.8
 
 DEFAULT_INFER_MIN_PEGS = CURRICULUM_MIN_PEGS
 DEFAULT_INFER_MAX_PEGS = CURRICULUM_START_MAX_PEGS
@@ -59,6 +67,9 @@ DEFAULT_INFER_MAX_PEGS = CURRICULUM_START_MAX_PEGS
 EPSILON_START = 0.05
 EPSILON_END = 0.05
 EPSILON_DECAY = 10_000
+
+BRANCHING_FACTOR = 3
+SEARCH_MAX_DEPTH = 5
 
 Transition = namedtuple(
     "Transition",
@@ -107,6 +118,12 @@ class DummyWriter:
 def _default_run_name(shape_id: str) -> str:
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     return f"dqn_{shape_id}_{timestamp}"
+
+
+def _normalize_center_idx(center_idx: int | None) -> int:
+    if center_idx is None or center_idx < 0:
+        return -1
+    return center_idx
 
 
 def create_summary_writer(
@@ -175,6 +192,231 @@ def select_action(
         q_values_masked = q_values.clone()
         q_values_masked[~legal] = -1e9
         return int(torch.argmax(q_values_masked).item())
+
+
+def _state_tensor_from_np(state_np: np.ndarray) -> torch.Tensor:
+    return torch.from_numpy(state_np.astype(np.float32))
+
+
+def _legal_mask_from_state(state_np: np.ndarray, actions: np.ndarray) -> np.ndarray:
+    state_np = state_np.astype(np.bool_, copy=False)
+    return legal_mask_kernel(state_np, actions)
+
+
+def _terminal_reward_from_state(state_np: np.ndarray, center_idx: int | None) -> float:
+    center_value = _normalize_center_idx(center_idx)
+    return float(terminal_reward_kernel(state_np, center_value))
+
+
+def _simulate_action_from_state(
+    state_np: np.ndarray,
+    action_idx: int,
+    actions: np.ndarray,
+    center_idx: int | None,
+) -> tuple[np.ndarray, float, bool, np.ndarray]:
+    state_np = state_np.astype(np.bool_, copy=False)
+    next_state, is_valid = simulate_action_kernel(state_np, action_idx, actions)
+    if not is_valid:
+        dummy_mask = np.zeros(actions.shape[0], dtype=np.bool_)
+        return next_state, -1.0, True, dummy_mask
+    next_legal = legal_mask_kernel(next_state, actions)
+    peg_total = peg_count_kernel(next_state)
+    done = bool((peg_total == 1) or (not mask_any_kernel(next_legal)))
+    reward = _terminal_reward_from_state(next_state, center_idx) if done else 0.0
+    return next_state, reward, done, next_legal
+
+
+def _eval_q_values(
+    q_net: TokenAttentionQNetwork, state_tensor: torch.Tensor
+) -> torch.Tensor:
+    with torch.no_grad():
+        return q_net(state_tensor.unsqueeze(0).to(DEVICE)).squeeze(0).detach().cpu()
+
+
+def _eval_q_values_batch(
+    q_net: TokenAttentionQNetwork, state_tensors: torch.Tensor
+) -> torch.Tensor:
+    with torch.no_grad():
+        return q_net(state_tensors.to(DEVICE)).detach().cpu()
+
+
+def _select_branch_actions(
+    q_values: torch.Tensor,
+    legal_mask: np.ndarray,
+    branching_factor: int,
+    epsilon: float,
+) -> list[int]:
+    q_np = q_values.numpy()
+    legal_mask = legal_mask.astype(np.bool_, copy=False)
+    actions = select_branch_actions_kernel(
+        q_np, legal_mask, branching_factor, float(epsilon)
+    )
+    return [int(a) for a in actions]
+
+
+def _fallback_legal_action(legal_mask: np.ndarray) -> int:
+    legal_indices = np.flatnonzero(legal_mask)
+    if len(legal_indices) == 0:
+        return -1
+    return int(random.choice(legal_indices))
+
+
+def _estimate_leaf_values_batch(
+    q_net: TokenAttentionQNetwork,
+    leaf_states: list[np.ndarray],
+    leaf_masks: list[np.ndarray],
+    center_idx: int | None,
+) -> list[float]:
+    if not leaf_states:
+        return []
+
+    tensors = torch.stack([_state_tensor_from_np(state) for state in leaf_states])
+    q_values_batch = _eval_q_values_batch(q_net, tensors).numpy()
+    values: list[float] = []
+    for idx, legal_mask in enumerate(leaf_masks):
+        if not mask_any_kernel(legal_mask):
+            values.append(_terminal_reward_from_state(leaf_states[idx], center_idx))
+            continue
+        legal_indices = np.flatnonzero(legal_mask)
+        if len(legal_indices) == 0:
+            values.append(_terminal_reward_from_state(leaf_states[idx], center_idx))
+            continue
+        legal_scores = q_values_batch[idx, legal_indices]
+        values.append(float(np.max(legal_scores)))
+    return values
+
+
+def _search_value_from_state(
+    q_net: TokenAttentionQNetwork,
+    state_np: np.ndarray,
+    actions: np.ndarray,
+    center_idx: int | None,
+    epsilon: float,
+    depth: int,
+    branching_factor: int,
+    max_depth: int,
+    replay: ReplayBuffer | None,
+    collect_transitions: bool,
+    return_action: bool,
+) -> float | tuple[int, float]:
+    legal_mask = _legal_mask_from_state(state_np, actions)
+    if not legal_mask.any():
+        terminal_reward = _terminal_reward_from_state(state_np, center_idx)
+        return (-1, terminal_reward) if return_action else terminal_reward
+
+    state_tensor = _state_tensor_from_np(state_np)
+    q_values = _eval_q_values(q_net, state_tensor)
+    branch_actions = _select_branch_actions(
+        q_values, legal_mask, branching_factor, epsilon
+    )
+    if not branch_actions:
+        terminal_reward = _terminal_reward_from_state(state_np, center_idx)
+        return (-1, terminal_reward) if return_action else terminal_reward
+
+    best_value = -float("inf")
+    best_action = -1
+    leaf_states: list[np.ndarray] = []
+    leaf_masks: list[np.ndarray] = []
+    leaf_indices: list[int] = []
+    branch_values: list[dict[str, float | int | None]] = []
+
+    for action_idx in branch_actions:
+        next_state_np, reward, done, next_legal = _simulate_action_from_state(
+            state_np, action_idx, actions, center_idx
+        )
+        next_state_tensor = _state_tensor_from_np(next_state_np)
+
+        if collect_transitions and replay is not None:
+            replay.push(
+                state_tensor.clone(),
+                action_idx,
+                reward,
+                next_state_tensor.clone(),
+                done,
+                next_legal.copy(),
+            )
+
+        entry = {"action": action_idx, "value": None, "reward": reward}
+
+        if done:
+            entry["value"] = reward
+        elif depth + 1 >= max_depth:
+            leaf_states.append(next_state_np)
+            leaf_masks.append(next_legal)
+            leaf_indices.append(len(branch_values))
+        else:
+            future_value = _search_value_from_state(
+                q_net,
+                next_state_np,
+                actions,
+                center_idx,
+                epsilon,
+                depth + 1,
+                branching_factor,
+                max_depth,
+                replay,
+                collect_transitions,
+                return_action=False,
+            )
+            entry["value"] = reward + GAMMA * float(future_value)
+
+        branch_values.append(entry)
+
+    if leaf_states:
+        leaf_values = _estimate_leaf_values_batch(
+            q_net, leaf_states, leaf_masks, center_idx
+        )
+        for idx, leaf_val in zip(leaf_indices, leaf_values):
+            entry = branch_values[idx]
+            reward = float(entry["reward"])
+            entry["value"] = reward + GAMMA * leaf_val
+
+    for entry in branch_values:
+        value = entry["value"]
+        action_idx = int(entry["action"])
+        if value is None:
+            continue
+        if value > best_value:
+            best_value = value
+            best_action = action_idx
+
+    if best_value == -float("inf"):
+        terminal_reward = _terminal_reward_from_state(state_np, center_idx)
+        return (-1, terminal_reward) if return_action else terminal_reward
+
+    if return_action:
+        return best_action, float(best_value)
+    return float(best_value)
+
+
+def markov_search_action(
+    q_net: TokenAttentionQNetwork,
+    state_np: np.ndarray,
+    actions: np.ndarray,
+    center_idx: int | None,
+    epsilon: float,
+    branching_factor: int = BRANCHING_FACTOR,
+    max_depth: int = SEARCH_MAX_DEPTH,
+    replay: ReplayBuffer | None = None,
+    collect_transitions: bool = False,
+) -> tuple[int, float]:
+    state_np = state_np.astype(np.bool_, copy=False)
+    result = _search_value_from_state(
+        q_net,
+        state_np,
+        actions,
+        center_idx,
+        epsilon,
+        depth=0,
+        branching_factor=branching_factor,
+        max_depth=max_depth,
+        replay=replay,
+        collect_transitions=collect_transitions,
+        return_action=True,
+    )
+    if isinstance(result, tuple):
+        return result
+    return -1, float(result)
 
 
 def compute_td_loss(
@@ -362,27 +604,23 @@ def train(
                     )
                     break
 
-                action_idx = select_action(q_net, state, legal_mask_np, epsilon)
-                if action_idx < 0:
-                    break
+                search_state = env.state.astype(np.bool_, copy=True)
+                action_idx, _ = markov_search_action(
+                    q_net,
+                    search_state,
+                    env.actions,
+                    env.idx_map.get(env.empty),
+                    epsilon,
+                    replay=replay,
+                    collect_transitions=True,
+                )
+                if action_idx < 0 or not legal_mask_np[action_idx]:
+                    action_idx = _fallback_legal_action(legal_mask_np)
+                    if action_idx < 0:
+                        break
 
                 next_state, reward, done = env.step(action_idx)
                 total_reward += reward
-
-                next_legal_mask = (
-                    env.legal_mask_numpy()
-                    if not done
-                    else np.zeros_like(legal_mask_np, dtype=np.bool_)
-                )
-
-                replay.push(
-                    state.cpu(),
-                    action_idx,
-                    reward,
-                    next_state.cpu(),
-                    done,
-                    next_legal_mask,
-                )
 
                 state = next_state
                 step_count += 1
@@ -495,6 +733,7 @@ def infer(
     min_pegs: int = DEFAULT_INFER_MIN_PEGS,
     max_pegs: int | None = None,
     render: bool = False,
+    use_search: bool = False,
 ) -> None:
     shape_ctxs = build_shape_contexts(SHAPES)
     if shape_id not in shape_ctxs:
@@ -552,7 +791,20 @@ def infer(
                 time.sleep(STEP_RENDER_DELAY)
                 break
 
-            action_idx = select_action(q_net, state, legal_mask_np, epsilon=0.0)
+            if use_search:
+                search_state = env.state.astype(np.bool_, copy=True)
+                action_idx, _ = markov_search_action(
+                    q_net,
+                    search_state,
+                    env.actions,
+                    env.idx_map.get(env.empty),
+                    epsilon=0.0,
+                    collect_transitions=False,
+                )
+                if action_idx < 0 or not legal_mask_np[action_idx]:
+                    action_idx = _fallback_legal_action(legal_mask_np)
+            else:
+                action_idx = select_action(q_net, state, legal_mask_np, epsilon=0.0)
             if action_idx < 0:
                 print(f"[Infer {episode} step {steps}] no legal action, aborting")
                 time.sleep(STEP_RENDER_DELAY)
@@ -673,6 +925,11 @@ def main() -> None:
         action="store_true",
         help="Render the board at every inference step.",
     )
+    _INFER_ARGS.add_argument(
+        "--search",
+        action="store_true",
+        help="Use neural-network-guided Markov search during inference.",
+    )
 
     parser = argparse.ArgumentParser(
         description="Train or run the Kongming DQN agent.", parents=[_TRAIN_ARGS]
@@ -709,6 +966,7 @@ def main() -> None:
             min_pegs=args.min_pegs,
             max_pegs=args.max_pegs,
             render=args.render,
+            use_search=args.search,
         )
 
 

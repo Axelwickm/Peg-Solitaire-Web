@@ -11,6 +11,8 @@ import random
 import numpy as np
 import torch
 
+from numba_kernels import generate_backward_state_kernel, legal_mask_kernel
+
 
 def build_grid_axes(holes: List[str], width: int, height: int) -> List[List[str]]:
     hole_set = set(holes)
@@ -218,49 +220,23 @@ class KongmingEnv:
     def _generate_backward_state(
         self, target_pegs: int, max_attempts: int = 64
     ) -> np.ndarray | None:
-        if target_pegs <= 1:
-            state = np.zeros_like(self.state)
-            state[self.idx_map[self.empty]] = True
+        empty_idx = self.idx_map.get(self.empty, -1)
+        state, success = generate_backward_state_kernel(
+            target_pegs,
+            empty_idx,
+            self.actions,
+            max_attempts,
+            self.state.shape[0],
+        )
+        if success:
             return state
-
-        for _ in range(max_attempts):
-            state = np.zeros_like(self.state)
-            state[self.idx_map[self.empty]] = True
-            steps = 0
-            while state.sum() < target_pegs:
-                reverse_moves = self._reverse_legal_moves(state)
-                if not reverse_moves:
-                    break
-                move_idx = random.randrange(len(reverse_moves))
-                frm, to, jump, _ = reverse_moves[move_idx]
-                state[frm] = True
-                state[jump] = True
-                state[to] = False
-                steps += 1
-                if steps > target_pegs * 4:
-                    break
-            if state.sum() == target_pegs:
-                return state
         return None
-
-    def _reverse_legal_moves(
-        self, state: np.ndarray
-    ) -> List[Tuple[int, int, int, int]]:
-        moves: List[Tuple[int, int, int, int]] = []
-        for idx, (frm, to, jump) in enumerate(self.actions):
-            if state[to] and (not state[frm]) and (not state[jump]):
-                moves.append((frm, to, jump, idx))
-        return moves
 
     def obs(self) -> torch.Tensor:
         return torch.from_numpy(self.state.astype(np.float32))
 
     def legal_mask(self) -> np.ndarray:
-        frm = self.actions[:, 0]
-        to = self.actions[:, 1]
-        jump = self.actions[:, 2]
-        legal = self.state[frm] & (~self.state[to]) & self.state[jump]
-        return legal.astype(np.bool_)
+        return legal_mask_kernel(self.state, self.actions)
 
     def legal_mask_numpy(self) -> np.ndarray:
         return self.legal_mask()
