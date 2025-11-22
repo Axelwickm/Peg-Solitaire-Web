@@ -88,6 +88,47 @@ class ShapeDef:
     height: int
 
 
+def _sorted_coords(coords: List[str]) -> List[str]:
+    return sorted(coords, key=lambda cell: tuple(map(int, cell.split(","))))
+
+
+def _generate_european_holes(cross_holes: List[str]) -> List[str]:
+    base = set(cross_holes)
+    for cell in ["1,1", "1,5", "5,1", "5,5"]:
+        base.add(cell)
+    return _sorted_coords(list(base))
+
+
+def _generate_german_holes() -> List[str]:
+    base: List[str] = []
+    for r in range(9):
+        for c in range(9):
+            if (3 <= r <= 5) or (3 <= c <= 5):
+                base.append(f"{r},{c}")
+    return _sorted_coords(base)
+
+
+def _generate_asym_cross_holes() -> List[str]:
+    base: List[str] = []
+    for r in range(8):
+        for c in range(9):
+            vertical_arm = 3 <= c <= 5
+            horizontal_arm = 3 <= r <= 5 and 1 <= c <= 8
+            if vertical_arm or horizontal_arm:
+                base.append(f"{r},{c}")
+    return _sorted_coords(base)
+
+
+def _generate_diamond_holes(size: int = 9, radius: int = 4) -> List[str]:
+    base: List[str] = []
+    center = size // 2
+    for r in range(size):
+        for c in range(size):
+            if abs(r - center) + abs(c - center) <= radius:
+                base.append(f"{r},{c}")
+    return _sorted_coords(base)
+
+
 def create_shapes() -> Dict[str, ShapeDef]:
     cross_holes: List[str] = []
     for r in range(7):
@@ -107,6 +148,22 @@ def create_shapes() -> Dict[str, ShapeDef]:
     )
     tri_moves = build_allowed_moves_from_axes(tri_axes)
 
+    european_holes = _generate_european_holes(cross_holes)
+    european_axes = build_grid_axes(european_holes, 7, 7)
+    european_moves = build_allowed_moves_from_axes(european_axes)
+
+    german_holes = _generate_german_holes()
+    german_axes = build_grid_axes(german_holes, 9, 9)
+    german_moves = build_allowed_moves_from_axes(german_axes)
+
+    asym_cross_holes = _generate_asym_cross_holes()
+    asym_cross_axes = build_grid_axes(asym_cross_holes, 9, 8)
+    asym_cross_moves = build_allowed_moves_from_axes(asym_cross_axes)
+
+    diamond_holes = _generate_diamond_holes()
+    diamond_axes = build_grid_axes(diamond_holes, 9, 9)
+    diamond_moves = build_allowed_moves_from_axes(diamond_axes)
+
     return {
         "cross": ShapeDef(
             id="cross",
@@ -123,6 +180,38 @@ def create_shapes() -> Dict[str, ShapeDef]:
             allowed=tri_moves,
             width=9,
             height=5,
+        ),
+        "european": ShapeDef(
+            id="european",
+            holes=european_holes,
+            empty="2,3",
+            allowed=european_moves,
+            width=7,
+            height=7,
+        ),
+        "diamond": ShapeDef(
+            id="diamond",
+            holes=diamond_holes,
+            empty="4,4",
+            allowed=diamond_moves,
+            width=9,
+            height=9,
+        ),
+        "german": ShapeDef(
+            id="german",
+            holes=german_holes,
+            empty="4,4",
+            allowed=german_moves,
+            width=9,
+            height=9,
+        ),
+        "asym-cross": ShapeDef(
+            id="asym-cross",
+            holes=asym_cross_holes,
+            empty="4,4",
+            allowed=asym_cross_moves,
+            width=9,
+            height=8,
         ),
     }
 
@@ -271,7 +360,7 @@ def render_cli_state(env: KongmingEnv) -> None:
     lines: List[str] = []
     idx_map = env.idx_map
 
-    if env.shape.id == "cross":
+    if env.shape.id in {"cross", "european", "german", "asym-cross", "diamond"}:
         size = env.shape.width
         for r in range(size):
             row_cells: List[str] = []

@@ -5,6 +5,7 @@ import math
 import random
 import time
 from collections import deque, namedtuple
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -31,7 +32,6 @@ from numba_kernels import (
     legal_mask_kernel,
     mask_any_kernel,
     peg_count_kernel,
-    select_branch_actions_kernel,
     simulate_action_kernel,
     terminal_reward_kernel,
 )
@@ -39,6 +39,7 @@ from numba_kernels import (
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 DEFAULT_SHAPE_ID = "cross"
+ALL_SHAPES_ID = "all"
 DEFAULT_REPLAY_CAPACITY = 1_000_000
 DEFAULT_BATCH_SIZE = 2048
 DEFAULT_LR = 1e-3
@@ -61,7 +62,7 @@ CURRICULUM_MIN_PEGS = 3
 CURRICULUM_START_MAX_PEGS = 3
 CURRICULUM_MAX_LIMIT = 32
 CURRICULUM_WINDOW = 500
-AVG_FINAL_PEGS_THRESHOLD = 1.8
+AVG_FINAL_PEGS_THRESHOLD = 2.0
 
 DEFAULT_INFER_MIN_PEGS = CURRICULUM_MIN_PEGS
 DEFAULT_INFER_MAX_PEGS = CURRICULUM_START_MAX_PEGS
@@ -70,7 +71,7 @@ EPSILON_START = 0.05
 EPSILON_END = 0.05
 EPSILON_DECAY = 10_000
 
-BRANCHING_FACTOR = 3
+BRANCHING_FACTOR = 500
 SEARCH_MAX_DEPTH = 5
 
 Transition = namedtuple(
@@ -153,7 +154,8 @@ def save_checkpoint(
     replay_capacity: int,
     batch_size: int,
     learning_rate: float,
-    max_initial_pegs: int,
+    max_initial_pegs: int | dict[str, int],
+    shape_ids: list[str] | None = None,
 ) -> None:
     checkpoint = {
         "model_state": q_net.state_dict(),
@@ -168,6 +170,10 @@ def save_checkpoint(
         "learning_rate": learning_rate,
         "max_initial_pegs": max_initial_pegs,
     }
+    if isinstance(max_initial_pegs, dict):
+        checkpoint["shape_curriculum"] = max_initial_pegs
+    if shape_ids is not None:
+        checkpoint["shape_ids"] = shape_ids
     torch.save(checkpoint, path)
 
 
@@ -176,6 +182,7 @@ def select_action(
     state: torch.Tensor,
     legal_mask: np.ndarray,
     epsilon: float,
+    shape_ctx: ShapeContext,
 ) -> int:
     if random.random() < epsilon:
         legal_indices = np.nonzero(legal_mask)[0]
@@ -185,7 +192,7 @@ def select_action(
 
     with torch.no_grad():
         s = state.unsqueeze(0).to(DEVICE)
-        q_values = q_net(s).squeeze(0)
+        q_values = q_net(s, shape_ctx).squeeze(0)
 
         legal = torch.from_numpy(legal_mask).to(DEVICE)
         if not legal.any():
@@ -229,31 +236,17 @@ def _simulate_action_from_state(
 
 
 def _eval_q_values(
-    q_net: TokenAttentionQNetwork, state_tensor: torch.Tensor
+    q_net: TokenAttentionQNetwork,
+    state_tensor: torch.Tensor,
+    shape_ctx: ShapeContext,
 ) -> torch.Tensor:
     with torch.no_grad():
-        return q_net(state_tensor.unsqueeze(0).to(DEVICE)).squeeze(0).detach().cpu()
-
-
-def _eval_q_values_batch(
-    q_net: TokenAttentionQNetwork, state_tensors: torch.Tensor
-) -> torch.Tensor:
-    with torch.no_grad():
-        return q_net(state_tensors.to(DEVICE)).detach().cpu()
-
-
-def _select_branch_actions(
-    q_values: torch.Tensor,
-    legal_mask: np.ndarray,
-    branching_factor: int,
-    epsilon: float,
-) -> list[int]:
-    q_np = q_values.numpy()
-    legal_mask = legal_mask.astype(np.bool_, copy=False)
-    actions = select_branch_actions_kernel(
-        q_np, legal_mask, branching_factor, float(epsilon)
-    )
-    return [int(a) for a in actions]
+        return (
+            q_net(state_tensor.unsqueeze(0).to(DEVICE), shape_ctx)
+            .squeeze(0)
+            .detach()
+            .cpu()
+        )
 
 
 def _fallback_legal_action(legal_mask: np.ndarray) -> int:
@@ -263,132 +256,201 @@ def _fallback_legal_action(legal_mask: np.ndarray) -> int:
     return int(random.choice(legal_indices))
 
 
-def _estimate_leaf_values_batch(
-    q_net: TokenAttentionQNetwork,
-    leaf_states: list[np.ndarray],
-    leaf_masks: list[np.ndarray],
-    center_idx: int | None,
-) -> list[float]:
-    if not leaf_states:
-        return []
-
-    tensors = torch.stack([_state_tensor_from_np(state) for state in leaf_states])
-    q_values_batch = _eval_q_values_batch(q_net, tensors).numpy()
-    values: list[float] = []
-    for idx, legal_mask in enumerate(leaf_masks):
-        if not mask_any_kernel(legal_mask):
-            values.append(_terminal_reward_from_state(leaf_states[idx], center_idx))
-            continue
-        legal_indices = np.flatnonzero(legal_mask)
-        if len(legal_indices) == 0:
-            values.append(_terminal_reward_from_state(leaf_states[idx], center_idx))
-            continue
-        legal_scores = q_values_batch[idx, legal_indices]
-        values.append(float(np.max(legal_scores)))
-    return values
+@dataclass
+class _ActionEval:
+    action_idx: int
+    q_value: float
+    reward: float
+    done: bool
+    next_state: np.ndarray
+    next_legal: np.ndarray
+    next_state_key: bytes
+    peg_count: int
+    used: bool = False
+    queued: bool = False
 
 
-def _search_value_from_state(
+@dataclass
+class _PlanCandidate:
+    action: _ActionEval
+    path: list[int]
+    history_keys: set[bytes]
+
+
+class _PlanQueue:
+    def __init__(self) -> None:
+        self._entries: list[_PlanCandidate] = []
+
+    def push(self, entry: _PlanCandidate) -> None:
+        self._entries.append(entry)
+
+    def pop(self) -> _PlanCandidate | None:
+        if not self._entries:
+            return None
+        best_idx = 0
+        best_val = self._entries[0].action.q_value
+        for idx in range(1, len(self._entries)):
+            value = self._entries[idx].action.q_value
+            if value > best_val:
+                best_val = value
+                best_idx = idx
+        return self._entries.pop(best_idx)
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+
+def _state_cache_key(state_np: np.ndarray) -> bytes:
+    state_np = state_np.astype(np.bool_, copy=False)
+    return state_np.tobytes()
+
+
+def _evaluate_state_actions(
     q_net: TokenAttentionQNetwork,
     state_np: np.ndarray,
     actions: np.ndarray,
     center_idx: int | None,
-    epsilon: float,
-    depth: int,
-    branching_factor: int,
-    max_depth: int,
+    shape_ctx: ShapeContext,
+    state_cache: dict[bytes, list[_ActionEval]],
     replay: ReplayBuffer | None,
     collect_transitions: bool,
-    return_action: bool,
-) -> float | tuple[int, float]:
+) -> list[_ActionEval]:
+    state_np = state_np.astype(np.bool_, copy=False)
+    cache_key = _state_cache_key(state_np)
+    cached = state_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     legal_mask = _legal_mask_from_state(state_np, actions)
     if not legal_mask.any():
-        terminal_reward = _terminal_reward_from_state(state_np, center_idx)
-        return (-1, terminal_reward) if return_action else terminal_reward
+        state_cache[cache_key] = []
+        return []
 
     state_tensor = _state_tensor_from_np(state_np)
-    q_values = _eval_q_values(q_net, state_tensor)
-    branch_actions = _select_branch_actions(
-        q_values, legal_mask, branching_factor, epsilon
-    )
-    if not branch_actions:
-        terminal_reward = _terminal_reward_from_state(state_np, center_idx)
-        return (-1, terminal_reward) if return_action else terminal_reward
+    q_values = _eval_q_values(q_net, state_tensor, shape_ctx).numpy()
+    legal_indices = np.flatnonzero(legal_mask)
+    entries: list[_ActionEval] = []
 
-    best_value = -float("inf")
-    best_action = -1
-    leaf_states: list[np.ndarray] = []
-    leaf_masks: list[np.ndarray] = []
-    leaf_indices: list[int] = []
-    branch_values: list[dict[str, float | int | None]] = []
-
-    for action_idx in branch_actions:
+    for action_idx in legal_indices:
         next_state_np, reward, done, next_legal = _simulate_action_from_state(
             state_np, action_idx, actions, center_idx
         )
-        next_state_tensor = _state_tensor_from_np(next_state_np)
+        next_state_np = next_state_np.astype(np.bool_, copy=False)
+        next_key = _state_cache_key(next_state_np)
+        peg_total = int(peg_count_kernel(next_state_np))
+        entries.append(
+            _ActionEval(
+                action_idx=action_idx,
+                q_value=float(q_values[action_idx]),
+                reward=float(reward),
+                done=bool(done),
+                next_state=next_state_np,
+                next_legal=next_legal,
+                next_state_key=next_key,
+                peg_count=peg_total,
+            )
+        )
 
         if collect_transitions and replay is not None:
             replay.push(
                 state_tensor.clone(),
-                action_idx,
-                reward,
-                next_state_tensor.clone(),
-                done,
+                int(action_idx),
+                float(reward),
+                _state_tensor_from_np(next_state_np),
+                bool(done),
                 next_legal.copy(),
             )
 
-        entry = {"action": action_idx, "value": None, "reward": reward}
+    entries.sort(key=lambda entry: entry.q_value, reverse=True)
+    state_cache[cache_key] = entries
+    return entries
 
-        if done:
-            entry["value"] = reward
-        elif depth + 1 >= max_depth:
-            leaf_states.append(next_state_np)
-            leaf_masks.append(next_legal)
-            leaf_indices.append(len(branch_values))
-        else:
-            future_value = _search_value_from_state(
-                q_net,
-                next_state_np,
-                actions,
-                center_idx,
-                epsilon,
-                depth + 1,
-                branching_factor,
-                max_depth,
-                replay,
-                collect_transitions,
-                return_action=False,
-            )
-            entry["value"] = reward + GAMMA * float(future_value)
 
-        branch_values.append(entry)
-
-    if leaf_states:
-        leaf_values = _estimate_leaf_values_batch(
-            q_net, leaf_states, leaf_masks, center_idx
-        )
-        for idx, leaf_val in zip(leaf_indices, leaf_values):
-            entry = branch_values[idx]
-            reward = float(entry["reward"])
-            entry["value"] = reward + GAMMA * leaf_val
-
-    for entry in branch_values:
-        value = entry["value"]
-        action_idx = int(entry["action"])
-        if value is None:
+def _enqueue_alternatives(
+    queue: _PlanQueue,
+    alternatives: list[_ActionEval],
+    path: list[int],
+    history_keys: set[bytes],
+) -> None:
+    for alt in alternatives:
+        if alt.used or alt.queued:
             continue
-        if value > best_value:
-            best_value = value
-            best_action = action_idx
+        alt.queued = True
+        queue.push(
+            _PlanCandidate(
+                action=alt,
+                path=list(path),
+                history_keys=set(history_keys),
+            )
+        )
 
-    if best_value == -float("inf"):
-        terminal_reward = _terminal_reward_from_state(state_np, center_idx)
-        return (-1, terminal_reward) if return_action else terminal_reward
 
-    if return_action:
-        return best_action, float(best_value)
-    return float(best_value)
+def _update_best_tracker(
+    tracker: dict[str, list[int] | int], peg_count: int, path: list[int]
+) -> None:
+    current_best = tracker.get("path")
+    best_pegs = tracker.get("peg_count", math.inf)
+    if not path:
+        return
+    if not current_best or peg_count < best_pegs:
+        tracker["peg_count"] = peg_count
+        tracker["path"] = list(path)
+
+
+def _pursue_greedy_plan(
+    start_state: np.ndarray,
+    path_prefix: list[int],
+    history_keys: set[bytes],
+    max_depth: int,
+    q_net: TokenAttentionQNetwork,
+    actions: np.ndarray,
+    center_idx: int | None,
+    shape_ctx: ShapeContext,
+    queue: _PlanQueue,
+    tracker: dict[str, list[int] | int],
+    state_cache: dict[bytes, list[_ActionEval]],
+    replay: ReplayBuffer | None,
+    collect_transitions: bool,
+) -> dict[str, object]:
+    current_state = start_state
+    current_path = list(path_prefix)
+    visited = set(history_keys)
+
+    while len(current_path) < max_depth:
+        options = _evaluate_state_actions(
+            q_net,
+            current_state,
+            actions,
+            center_idx,
+            shape_ctx,
+            state_cache,
+            replay,
+            collect_transitions,
+        )
+        available = [op for op in options if op.next_state_key not in visited]
+        if not available:
+            break
+        best_action = available[0]
+        best_action.used = True
+        _enqueue_alternatives(queue, available[1:], current_path, visited)
+        current_path.append(best_action.action_idx)
+        visited.add(best_action.next_state_key)
+        _update_best_tracker(tracker, best_action.peg_count, current_path)
+        if best_action.done:
+            return {
+                "solved": True,
+                "path": list(current_path),
+                "history": set(visited),
+                "state": best_action.next_state,
+            }
+        current_state = best_action.next_state
+
+    return {
+        "solved": False,
+        "path": list(current_path),
+        "history": set(visited),
+        "state": current_state,
+    }
 
 
 def markov_search_action(
@@ -396,6 +458,7 @@ def markov_search_action(
     state_np: np.ndarray,
     actions: np.ndarray,
     center_idx: int | None,
+    shape_ctx: ShapeContext,
     epsilon: float,
     branching_factor: int = BRANCHING_FACTOR,
     max_depth: int = SEARCH_MAX_DEPTH,
@@ -403,28 +466,130 @@ def markov_search_action(
     collect_transitions: bool = False,
 ) -> tuple[int, float]:
     state_np = state_np.astype(np.bool_, copy=False)
-    result = _search_value_from_state(
-        q_net,
+    legal_mask = _legal_mask_from_state(state_np, actions)
+    if not legal_mask.any():
+        terminal_reward = _terminal_reward_from_state(state_np, center_idx)
+        return -1, terminal_reward
+
+    if epsilon > 0.0 and random.random() < epsilon:
+        random_action = _fallback_legal_action(legal_mask)
+        if random_action < 0:
+            terminal_reward = _terminal_reward_from_state(state_np, center_idx)
+            return -1, terminal_reward
+        root_values = _eval_q_values(
+            q_net, _state_tensor_from_np(state_np), shape_ctx
+        ).numpy()
+        return random_action, float(root_values[random_action])
+
+    queue = _PlanQueue()
+    state_cache: dict[bytes, list[_ActionEval]] = {}
+    initial_pegs = int(peg_count_kernel(state_np))
+    tracker: dict[str, list[int] | int] = {
+        "peg_count": initial_pegs,
+        "path": [],
+    }
+
+    root_key = _state_cache_key(state_np)
+    history_keys: set[bytes] = {root_key}
+
+    greedy_result = _pursue_greedy_plan(
         state_np,
+        [],
+        history_keys,
+        max_depth,
+        q_net,
         actions,
         center_idx,
-        epsilon,
-        depth=0,
-        branching_factor=branching_factor,
-        max_depth=max_depth,
-        replay=replay,
-        collect_transitions=collect_transitions,
-        return_action=True,
+        shape_ctx,
+        queue,
+        tracker,
+        state_cache,
+        replay,
+        collect_transitions,
     )
-    if isinstance(result, tuple):
-        return result
-    return -1, float(result)
+
+    best_path: list[int] | None = None
+    if greedy_result["solved"]:
+        best_path = greedy_result["path"]  # type: ignore[assignment]
+    else:
+        max_expansions = max(0, branching_factor - 1)
+        expansions = 0
+        while expansions < max_expansions:
+            candidate = queue.pop()
+            if candidate is None:
+                break
+            action = candidate.action
+            if action.used:
+                continue
+            action.used = True
+            new_path = candidate.path + [action.action_idx]
+            new_history = set(candidate.history_keys)
+            new_history.add(action.next_state_key)
+            _update_best_tracker(tracker, action.peg_count, new_path)
+            if action.done:
+                best_path = list(new_path)
+                tracker["path"] = list(new_path)
+                break
+            greedy_result = _pursue_greedy_plan(
+                action.next_state,
+                new_path,
+                new_history,
+                max_depth,
+                q_net,
+                actions,
+                center_idx,
+                shape_ctx,
+                queue,
+                tracker,
+                state_cache,
+                replay,
+                collect_transitions,
+            )
+            if greedy_result["solved"]:
+                best_path = greedy_result["path"]  # type: ignore[assignment]
+                break
+            expansions += 1
+
+        if not collect_transitions and max_expansions > 0:
+            print(
+                f"[Search] expanded {expansions} alternative branches "
+                f"(limit {max_expansions})"
+            )
+
+    if not best_path:
+        best_path = tracker.get("path")
+    if not best_path:
+        fallback_action = _fallback_legal_action(legal_mask)
+        if fallback_action < 0:
+            terminal_reward = _terminal_reward_from_state(state_np, center_idx)
+            return -1, terminal_reward
+        root_values = _eval_q_values(
+            q_net, _state_tensor_from_np(state_np), shape_ctx
+        ).numpy()
+        return fallback_action, float(root_values[fallback_action])
+
+    chosen_action = int(best_path[0])
+    root_actions = state_cache.get(root_key)
+    chosen_value = 0.0
+    if root_actions is not None:
+        for entry in root_actions:
+            if entry.action_idx == chosen_action:
+                chosen_value = entry.q_value
+                break
+    else:
+        root_values = _eval_q_values(
+            q_net, _state_tensor_from_np(state_np), shape_ctx
+        ).numpy()
+        chosen_value = float(root_values[chosen_action])
+
+    return chosen_action, chosen_value
 
 
 def compute_td_loss(
     q_net: TokenAttentionQNetwork,
     target_net: TokenAttentionQNetwork,
     batch: Transition,
+    shape_ctx: ShapeContext,
 ) -> torch.Tensor:
     states = torch.stack(batch.state).to(DEVICE)
     actions = torch.tensor(batch.action, dtype=torch.long, device=DEVICE)
@@ -435,11 +600,11 @@ def compute_td_loss(
         [torch.from_numpy(m.astype(np.bool_)) for m in batch.next_legal_mask]
     ).to(DEVICE)
 
-    q_values = q_net(states)
+    q_values = q_net(states, shape_ctx)
     state_action_values = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
 
     with torch.no_grad():
-        next_q_values = target_net(next_states)
+        next_q_values = target_net(next_states, shape_ctx)
         next_q_values[~next_masks] = -1e9
         next_state_values, _ = next_q_values.max(dim=1)
         no_legal = ~next_masks.any(dim=1)
@@ -478,7 +643,9 @@ def evaluate_policy(
                     done = True
                     break
 
-                action_idx = select_action(q_net, state, legal_mask_np, epsilon=0.0)
+                action_idx = select_action(
+                    q_net, state, legal_mask_np, epsilon=0.0, shape_ctx=shape_ctx
+                )
                 if action_idx < 0:
                     break
 
@@ -513,22 +680,33 @@ def train(
     learning_rate: float = DEFAULT_LR,
 ) -> None:
     shape_ctxs = build_shape_contexts(SHAPES)
-    if shape_id not in shape_ctxs:
-        raise ValueError(f"Unknown shape '{shape_id}'")
-    shape_ctx = shape_ctxs[shape_id]
+    if shape_id == ALL_SHAPES_ID:
+        active_shapes = sorted(shape_ctxs.keys())
+    else:
+        if shape_id not in shape_ctxs:
+            raise ValueError(f"Unknown shape '{shape_id}'")
+        active_shapes = [shape_id]
 
-    env = KongmingEnv(shape_ctx.shape)
-    env.reset_full()
-    full_pegs = int(env.state.sum())
-    max_curriculum_pegs = min(CURRICULUM_START_MAX_PEGS, full_pegs)
+    envs: dict[str, KongmingEnv] = {}
+    full_pegs_map: dict[str, int] = {}
+    curriculum_limits: dict[str, int] = {}
+    episode_final_pegs: dict[str, deque[int]] = {}
+    for sid in active_shapes:
+        env = KongmingEnv(shape_ctxs[sid].shape)
+        env.reset_full()
+        envs[sid] = env
+        full_pegs = int(env.state.sum())
+        full_pegs_map[sid] = full_pegs
+        curriculum_limits[sid] = min(CURRICULUM_START_MAX_PEGS, full_pegs)
+        episode_final_pegs[sid] = deque(maxlen=CURRICULUM_WINDOW)
 
-    q_net = TokenAttentionQNetwork(shape_ctx).to(DEVICE)
-    target_net = TokenAttentionQNetwork(shape_ctx).to(DEVICE)
+    q_net = TokenAttentionQNetwork().to(DEVICE)
+    target_net = TokenAttentionQNetwork().to(DEVICE)
     target_net.load_state_dict(q_net.state_dict())
     target_net.eval()
 
     optimizer = optim.Adam(q_net.parameters(), lr=learning_rate)
-    replay = ReplayBuffer(replay_capacity)
+    replay_buffers = {sid: ReplayBuffer(replay_capacity) for sid in active_shapes}
 
     start_episode = 1
     steps_done = 0
@@ -541,18 +719,29 @@ def train(
             raise FileNotFoundError(f"Model to load not found: {load_path}")
         checkpoint = torch.load(load_path, map_location=DEVICE)
         if isinstance(checkpoint, dict) and "model_state" in checkpoint:
-            q_net.load_state_dict(checkpoint["model_state"])
+            q_net.load_state_dict(checkpoint["model_state"], strict=False)
             if "optimizer_state" in checkpoint:
                 optimizer.load_state_dict(checkpoint["optimizer_state"])
             start_episode = checkpoint.get("episode", 0) + 1
             steps_done = checkpoint.get("steps_done", 0)
             tb_run_name = checkpoint.get("tb_run_name")
             tb_log_dir = checkpoint.get("tb_log_dir", "")
-            max_curriculum_pegs = checkpoint.get(
-                "max_initial_pegs", max_curriculum_pegs
-            )
+            saved_curriculum = checkpoint.get("shape_curriculum")
+            if isinstance(saved_curriculum, dict):
+                for sid in active_shapes:
+                    if sid in saved_curriculum:
+                        curriculum_limits[sid] = int(saved_curriculum[sid])
+            else:
+                legacy = checkpoint.get("max_initial_pegs")
+                if isinstance(legacy, dict):
+                    for sid in active_shapes:
+                        if sid in legacy:
+                            curriculum_limits[sid] = int(legacy[sid])
+                elif isinstance(legacy, int):
+                    for sid in active_shapes:
+                        curriculum_limits[sid] = legacy
         else:
-            q_net.load_state_dict(checkpoint)
+            q_net.load_state_dict(checkpoint, strict=False)
             start_episode = 1
         target_net.load_state_dict(q_net.state_dict())
         target_net.eval()
@@ -561,7 +750,7 @@ def train(
     writer, tb_run_name, tb_log_dir = create_summary_writer(
         shape_id, run_name=tb_run_name
     )
-    episode_final_pegs = deque(maxlen=CURRICULUM_WINDOW)
+    multi_shape_mode = len(active_shapes) > 1
 
     ensure_models_dir()
     model_path = get_default_model_path(shape_id)
@@ -571,6 +760,21 @@ def train(
     episode = start_episode
     epoch_idx = 0
     train_steps_taken = 0
+    shape_order = active_shapes.copy()
+    if len(shape_order) > 1:
+        random.shuffle(shape_order)
+    shape_order_idx = 0
+
+    def _next_shape_id() -> str:
+        nonlocal shape_order_idx, shape_order
+        if len(shape_order) == 1:
+            return shape_order[0]
+        sid = shape_order[shape_order_idx]
+        shape_order_idx += 1
+        if shape_order_idx >= len(shape_order):
+            shape_order_idx = 0
+            random.shuffle(shape_order)
+        return sid
 
     try:
         while episode <= end_episode:
@@ -579,17 +783,18 @@ def train(
             epoch_episode_count = 0
             epoch_reward_total = 0.0
 
-            while (
-                episode <= end_episode and collected_steps < COLLECT_STEPS_PER_EPOCH
-            ):
+            while episode <= end_episode and collected_steps < COLLECT_STEPS_PER_EPOCH:
                 current_episode = episode
                 last_episode = current_episode
                 epsilon = EPSILON_END + (EPSILON_START - EPSILON_END) * math.exp(
                     -1.0 * steps_done / EPSILON_DECAY
                 )
 
+                current_shape_id = _next_shape_id()
+                env = envs[current_shape_id]
+                shape_ctx = shape_ctxs[current_shape_id]
+                max_pegs = curriculum_limits[current_shape_id]
                 min_pegs = CURRICULUM_MIN_PEGS
-                max_pegs = max_curriculum_pegs
                 if max_pegs < min_pegs:
                     max_pegs = min_pegs
                 target_pegs = random.randint(min_pegs, max_pegs)
@@ -608,7 +813,7 @@ def train(
 
                         next_state = state.clone()
                         next_legal_mask = np.zeros_like(legal_mask_np, dtype=np.bool_)
-                        replay.push(
+                        replay_buffers[current_shape_id].push(
                             state.cpu(),
                             -1,
                             reward,
@@ -625,8 +830,9 @@ def train(
                         search_state,
                         env.actions,
                         env.idx_map.get(env.empty),
+                        shape_ctx,
                         epsilon,
-                        replay=replay,
+                        replay=replay_buffers[current_shape_id],
                         collect_transitions=True,
                     )
                     if action_idx < 0 or not legal_mask_np[action_idx]:
@@ -643,51 +849,67 @@ def train(
                     collected_steps += 1
 
                 final_pegs = int(env.state.sum())
-                episode_final_pegs.append(final_pegs)
+                final_window = episode_final_pegs[current_shape_id]
+                final_window.append(final_pegs)
                 avg_final_pegs = (
-                    sum(episode_final_pegs) / len(episode_final_pegs)
-                    if episode_final_pegs
+                    sum(final_window) / len(final_window)
+                    if final_window
                     else final_pegs
                 )
-                writer.add_scalar("episode/reward", total_reward, current_episode)
+                tag_prefix = f"{current_shape_id}/" if multi_shape_mode else ""
                 writer.add_scalar(
-                    "episode/avg_final_pegs", avg_final_pegs, current_episode
+                    f"{tag_prefix}episode/reward", total_reward, current_episode
                 )
                 writer.add_scalar(
-                    "episode/max_initial_pegs", max_curriculum_pegs, current_episode
+                    f"{tag_prefix}episode/avg_final_pegs",
+                    avg_final_pegs,
+                    current_episode,
+                )
+                writer.add_scalar(
+                    f"{tag_prefix}episode/max_initial_pegs",
+                    curriculum_limits[current_shape_id],
+                    current_episode,
                 )
 
                 if current_episode % TARGET_UPDATE_INTERVAL == 0:
                     target_net.load_state_dict(q_net.state_dict())
                     print(
-                        f"[Episode {current_episode}] Target network updated. "
-                        f"Last episode reward {total_reward:.2f}, final pegs {final_pegs}"
+                        f"[Episode {current_episode}] Target network updated "
+                        f"(shape {current_shape_id}). Last reward {total_reward:.2f}, "
+                        f"final pegs {final_pegs}"
                     )
 
                 if current_episode % CURRICULUM_EVAL_INTERVAL == 0:
                     eval_reward, eval_final_pegs = evaluate_policy(
                         q_net,
                         shape_ctx,
-                        max_curriculum_pegs,
+                        curriculum_limits[current_shape_id],
                         episodes=EVAL_EPISODES_PER_CHECK,
                     )
-                    writer.add_scalar("eval/reward", eval_reward, current_episode)
-                    writer.add_scalar("eval/final_pegs", eval_final_pegs, current_episode)
+                    writer.add_scalar(
+                        f"{tag_prefix}eval/reward", eval_reward, current_episode
+                    )
+                    writer.add_scalar(
+                        f"{tag_prefix}eval/final_pegs", eval_final_pegs, current_episode
+                    )
                     print(
-                        f"[Eval {current_episode}] reward {eval_reward:.2f} "
-                        f"avg_final_pegs {eval_final_pegs:.2f} "
-                        f"max_start_pegs {max_curriculum_pegs}"
+                        f"[Eval {current_episode}] shape {current_shape_id} "
+                        f"reward {eval_reward:.2f} avg_final_pegs {eval_final_pegs:.2f} "
+                        f"max_start_pegs {curriculum_limits[current_shape_id]}"
                     )
                     if (
                         eval_final_pegs <= AVG_FINAL_PEGS_THRESHOLD
-                        and max_curriculum_pegs < CURRICULUM_MAX_LIMIT
+                        and curriculum_limits[current_shape_id] < CURRICULUM_MAX_LIMIT
                     ):
-                        max_curriculum_pegs = min(
-                            max_curriculum_pegs + 1, full_pegs, CURRICULUM_MAX_LIMIT
+                        curriculum_limits[current_shape_id] = min(
+                            curriculum_limits[current_shape_id] + 1,
+                            full_pegs_map[current_shape_id],
+                            CURRICULUM_MAX_LIMIT,
                         )
                         print(
-                            f"[Episode {current_episode}] Curriculum level up via eval, "
-                            f"max starting pegs is now {max_curriculum_pegs}"
+                            f"[Episode {current_episode}] shape {current_shape_id} "
+                            f"curriculum level up, max starting pegs "
+                            f"{curriculum_limits[current_shape_id]}"
                         )
 
                 if current_episode % CHECKPOINT_SAVE_INTERVAL == 0:
@@ -703,18 +925,23 @@ def train(
                         replay_capacity,
                         batch_size,
                         learning_rate,
-                        max_curriculum_pegs,
+                        curriculum_limits,
+                        active_shapes,
                     )
 
                 if current_episode % 100 == 0:
-                    avg_last = sum(episode_final_pegs) / max(len(episode_final_pegs), 1)
+                    avg_last = (
+                        sum(final_window) / max(len(final_window), 1)
+                        if final_window
+                        else final_pegs
+                    )
                     print(
-                        f"Episode {current_episode} "
+                        f"Episode {current_episode} shape {current_shape_id} "
                         f"reward {total_reward:.2f} "
                         f"final_pegs {final_pegs} "
                         f"avg_final_pegs_window {avg_last:.3f} "
-                        f"max_start_pegs {max_curriculum_pegs} "
-                        f"buffer_size {len(replay)} "
+                        f"max_start_pegs {curriculum_limits[current_shape_id]} "
+                        f"buffer_size {sum(len(buf) for buf in replay_buffers.values())} "
                         f"epoch {epoch_idx}"
                     )
 
@@ -727,16 +954,22 @@ def train(
                 print(
                     f"[Epoch {epoch_idx}] collected {collected_steps} steps over "
                     f"{epoch_episode_count} episodes, avg reward {avg_epoch_reward:.2f}; "
-                    f"buffer_size {len(replay)}"
+                    f"buffer_size {sum(len(buf) for buf in replay_buffers.values())}"
                 )
 
-            updates_to_run = (
-                TRAIN_UPDATES_PER_EPOCH if len(replay) >= batch_size else 0
-            )
+            available_shapes = [
+                sid for sid, buf in replay_buffers.items() if len(buf) >= batch_size
+            ]
+            updates_to_run = TRAIN_UPDATES_PER_EPOCH if available_shapes else 0
             epoch_training_loss = 0.0
             for _ in range(updates_to_run):
-                batch = Transition(*zip(*replay.sample(batch_size)))
-                loss = compute_td_loss(q_net, target_net, batch)
+                chosen_shape = random.choice(available_shapes)
+                batch = Transition(
+                    *zip(*replay_buffers[chosen_shape].sample(batch_size))
+                )
+                loss = compute_td_loss(
+                    q_net, target_net, batch, shape_ctxs[chosen_shape]
+                )
                 writer.add_scalar("train/loss", loss.item(), train_steps_taken)
                 optimizer.zero_grad()
                 loss.backward()
@@ -745,10 +978,11 @@ def train(
                 train_steps_taken += 1
                 epoch_training_loss += loss.item()
 
-            if updates_to_run == 0 and len(replay) < batch_size:
+            if updates_to_run == 0 and not available_shapes:
                 print(
                     f"[Epoch {epoch_idx}] Skipped training updates "
-                    f"(buffer size {len(replay)}/{batch_size})"
+                    f"(buffer size "
+                    f"{sum(len(buf) for buf in replay_buffers.values())}/{batch_size})"
                 )
             elif updates_to_run > 0:
                 avg_train_loss = epoch_training_loss / updates_to_run
@@ -773,7 +1007,8 @@ def train(
         replay_capacity,
         batch_size,
         learning_rate,
-        max_curriculum_pegs,
+        curriculum_limits,
+        active_shapes,
     )
     print(f"Training finished, model saved to {model_path}")
 
@@ -788,111 +1023,258 @@ def infer(
     use_search: bool = False,
 ) -> None:
     shape_ctxs = build_shape_contexts(SHAPES)
+    if shape_id == ALL_SHAPES_ID:
+        shared_load = (
+            Path(load_path)
+            if load_path is not None
+            else get_default_model_path(ALL_SHAPES_ID)
+        )
+        _infer_multi(
+            shape_ctxs,
+            shared_load,
+            episodes,
+            min_pegs,
+            max_pegs,
+            render,
+            use_search,
+        )
+        return
     if shape_id not in shape_ctxs:
         raise ValueError(f"Unknown shape '{shape_id}'")
-    shape_ctx = shape_ctxs[shape_id]
+    _infer_single(
+        shape_ctxs[shape_id],
+        load_path,
+        episodes,
+        min_pegs,
+        max_pegs,
+        render,
+        use_search,
+    )
 
-    env = KongmingEnv(shape_ctx.shape)
-    q_net = TokenAttentionQNetwork(shape_ctx).to(DEVICE)
-    model_path = Path(load_path) if load_path else get_default_model_path(shape_id)
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model file not found: {model_path}")
+
+def _load_q_network(model_path: Path) -> tuple[TokenAttentionQNetwork, str | None]:
+    q_net = TokenAttentionQNetwork().to(DEVICE)
     checkpoint = torch.load(model_path, map_location=DEVICE)
-    tb_run_name = None
+    tb_run_name: str | None = None
     if isinstance(checkpoint, dict) and "model_state" in checkpoint:
-        q_net.load_state_dict(checkpoint["model_state"])
+        q_net.load_state_dict(checkpoint["model_state"], strict=False)
         tb_run_name = checkpoint.get("tb_run_name")
     else:
-        q_net.load_state_dict(checkpoint)
+        q_net.load_state_dict(checkpoint, strict=False)
     q_net.eval()
-    if tb_run_name:
-        print(f"Inference uses TensorBoard run '{tb_run_name}'")
+    return q_net, tb_run_name
 
-    full_pegs = int(env.state.sum())
-    max_pegs = DEFAULT_INFER_MAX_PEGS if max_pegs is None else max_pegs
-    max_pegs = max(1, min(max_pegs, full_pegs))
-    min_pegs = max(1, min(min_pegs, full_pegs))
-    if min_pegs > max_pegs:
-        raise ValueError("min_pegs must be <= max_pegs and within valid range")
 
-    rewards: list[float] = []
-    for episode in range(1, episodes + 1):
-        target_pegs = random.randint(min_pegs, max_pegs)
-        state = env.reset_with_pegs(target_pegs)
-        done = False
-        episode_reward = 0.0
-        steps = 0
+def _run_inference_episode(
+    env: KongmingEnv,
+    q_net: TokenAttentionQNetwork,
+    shape_ctx: ShapeContext,
+    target_pegs: int,
+    render: bool,
+    use_search: bool,
+    episode_number: int,
+) -> tuple[float, int, int]:
+    state = env.reset_with_pegs(target_pegs)
+    done = False
+    episode_reward = 0.0
+    steps = 0
 
-        print(f"[Infer {episode}] start target_pegs={target_pegs}")
-        if render:
-            render_cli_state(env)
-            time.sleep(STEP_RENDER_DELAY)
+    print(
+        f"[Infer {episode_number}] shape={shape_ctx.shape.id} "
+        f"start target_pegs={target_pegs}"
+    )
+    if render:
+        render_cli_state(env)
+        time.sleep(STEP_RENDER_DELAY)
 
-        while not done and steps < MAX_STEPS_PER_EPISODE:
-            legal_mask_np = env.legal_mask_numpy()
-            if legal_mask_np.sum() == 0:
-                reward = compute_final_reward(env, center_bonus=True)
-                episode_reward += reward
-                done = True
-                print(
-                    f"[Infer {episode} step {steps}] no legal moves, "
-                    f"added terminal reward {reward:.2f}"
-                )
-                if render:
-                    render_cli_state(env)
-                time.sleep(STEP_RENDER_DELAY)
-                break
-
-            if use_search:
-                search_state = env.state.astype(np.bool_, copy=True)
-                action_idx, _ = markov_search_action(
-                    q_net,
-                    search_state,
-                    env.actions,
-                    env.idx_map.get(env.empty),
-                    epsilon=0.0,
-                    collect_transitions=False,
-                )
-                if action_idx < 0 or not legal_mask_np[action_idx]:
-                    action_idx = _fallback_legal_action(legal_mask_np)
-            else:
-                action_idx = select_action(q_net, state, legal_mask_np, epsilon=0.0)
-            if action_idx < 0:
-                print(f"[Infer {episode} step {steps}] no legal action, aborting")
-                time.sleep(STEP_RENDER_DELAY)
-                break
-
-            frm, to, jump = env.actions[action_idx]
-            action_desc = f"{env.holes[int(frm)]} -> {env.holes[int(to)]} via {env.holes[int(jump)]}"
-
-            state, reward, done = env.step(action_idx)
-            steps += 1
+    while not done and steps < MAX_STEPS_PER_EPISODE:
+        legal_mask_np = env.legal_mask_numpy()
+        if legal_mask_np.sum() == 0:
+            reward = compute_final_reward(env, center_bonus=True)
             episode_reward += reward
-
+            done = True
             print(
-                f"[Infer {episode} step {steps}] action {action_idx}: {action_desc} "
-                f"reward {reward:.2f} done {done}"
+                f"[Infer {episode_number} step {steps}] shape={shape_ctx.shape.id} "
+                f"no legal moves, added terminal reward {reward:.2f}"
             )
             if render:
                 render_cli_state(env)
             time.sleep(STEP_RENDER_DELAY)
+            break
 
-        if not done:
-            reward = compute_final_reward(env, center_bonus=True)
-            episode_reward += reward
+        if use_search:
+            search_state = env.state.astype(np.bool_, copy=True)
+            action_idx, _ = markov_search_action(
+                q_net,
+                search_state,
+                env.actions,
+                env.idx_map.get(env.empty),
+                shape_ctx,
+                epsilon=0.0,
+                collect_transitions=False,
+            )
+            if action_idx < 0 or not legal_mask_np[action_idx]:
+                action_idx = _fallback_legal_action(legal_mask_np)
+        else:
+            action_idx = select_action(
+                q_net, state, legal_mask_np, epsilon=0.0, shape_ctx=shape_ctx
+            )
+        if action_idx < 0:
+            print(
+                f"[Infer {episode_number} step {steps}] shape={shape_ctx.shape.id} "
+                "no legal action, aborting"
+            )
+            time.sleep(STEP_RENDER_DELAY)
+            break
 
-        final_pegs = int(env.state.sum())
-        rewards.append(episode_reward)
+        frm, to, jump = env.actions[action_idx]
+        action_desc = (
+            f"{env.holes[int(frm)]} -> {env.holes[int(to)]} via {env.holes[int(jump)]}"
+        )
+
+        state, reward, done = env.step(action_idx)
+        steps += 1
+        episode_reward += reward
+
         print(
-            f"[Infer {episode}] reward {episode_reward:.2f} "
-            f"final_pegs {final_pegs} steps {steps}"
+            f"[Infer {episode_number} step {steps}] shape={shape_ctx.shape.id} "
+            f"action {action_idx}: {action_desc} reward {reward:.2f} done {done}"
         )
         if render:
             render_cli_state(env)
+        time.sleep(STEP_RENDER_DELAY)
+
+    if not done:
+        reward = compute_final_reward(env, center_bonus=True)
+        episode_reward += reward
+
+    final_pegs = int(env.state.sum())
+    return episode_reward, final_pegs, steps
+
+
+def _infer_single(
+    shape_ctx: ShapeContext,
+    load_path: Path | str | None,
+    episodes: int,
+    min_pegs: int,
+    max_pegs: int | None,
+    render: bool,
+    use_search: bool,
+) -> None:
+    model_path = (
+        Path(load_path) if load_path else get_default_model_path(shape_ctx.shape.id)
+    )
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+    env = KongmingEnv(shape_ctx.shape)
+    env.reset_full()
+    q_net, tb_run_name = _load_q_network(model_path)
+    if tb_run_name:
+        print(f"Inference uses TensorBoard run '{tb_run_name}'")
+
+    full_pegs = int(env.state.sum())
+    max_pegs_val = DEFAULT_INFER_MAX_PEGS if max_pegs is None else max_pegs
+    max_pegs_val = max(1, min(max_pegs_val, full_pegs))
+    min_pegs_val = max(1, min(min_pegs, full_pegs))
+    if min_pegs_val > max_pegs_val:
+        raise ValueError("min_pegs must be <= max_pegs and within valid range")
+
+    rewards: list[float] = []
+    for episode in range(1, episodes + 1):
+        target_pegs = random.randint(min_pegs_val, max_pegs_val)
+        episode_reward, final_pegs, _ = _run_inference_episode(
+            env,
+            q_net,
+            shape_ctx,
+            target_pegs,
+            render,
+            use_search,
+            episode,
+        )
+        rewards.append(episode_reward)
+        print(
+            f"[Infer {episode}] shape={shape_ctx.shape.id} reward {episode_reward:.2f} "
+            f"final_pegs {final_pegs}"
+        )
         print("-" * 40)
 
     avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
-    print(f"Inference finished ({episodes} episodes), avg reward {avg_reward:.2f}")
+    print(
+        f"Inference finished for shape '{shape_ctx.shape.id}' "
+        f"({episodes} episodes), avg reward {avg_reward:.2f}"
+    )
+
+
+def _infer_multi(
+    shape_ctxs: dict[str, ShapeContext],
+    load_path: Path,
+    episodes: int,
+    min_pegs: int,
+    max_pegs: int | None,
+    render: bool,
+    use_search: bool,
+) -> None:
+    if not load_path.exists():
+        raise FileNotFoundError(
+            f"Model file not found for multi-shape inference: {load_path}"
+        )
+    q_net, tb_run_name = _load_q_network(load_path)
+    if tb_run_name:
+        print(f"Inference uses TensorBoard run '{tb_run_name}'")
+    shape_ids = sorted(shape_ctxs.keys())
+    if not shape_ids:
+        print("No shapes available for inference.")
+        return
+    envs = {sid: KongmingEnv(shape_ctxs[sid].shape) for sid in shape_ids}
+    for env in envs.values():
+        env.reset_full()
+    full_pegs = {sid: int(envs[sid].state.sum()) for sid in shape_ids}
+    rewards: dict[str, list[float]] = {sid: [] for sid in shape_ids}
+
+    print(f"Running inference across shapes {shape_ids} for {episodes} total episodes.")
+
+    for episode_idx in range(1, episodes + 1):
+        sid = shape_ids[(episode_idx - 1) % len(shape_ids)]
+        env = envs[sid]
+        shape_ctx = shape_ctxs[sid]
+        full_pegs_val = full_pegs[sid]
+        max_pegs_val = max(
+            1,
+            min(
+                max_pegs if max_pegs is not None else DEFAULT_INFER_MAX_PEGS,
+                full_pegs_val,
+            ),
+        )
+        min_pegs_val = max(1, min(min_pegs, full_pegs_val))
+        if min_pegs_val > max_pegs_val:
+            raise ValueError(
+                f"min_pegs must be <= max_pegs for shape '{sid}' (available up to {full_pegs_val})"
+            )
+        target_pegs = random.randint(min_pegs_val, max_pegs_val)
+        episode_reward, final_pegs, _ = _run_inference_episode(
+            env,
+            q_net,
+            shape_ctx,
+            target_pegs,
+            render,
+            use_search,
+            episode_idx,
+        )
+        rewards[sid].append(episode_reward)
+        print(
+            f"[Infer {episode_idx}] shape={sid} reward {episode_reward:.2f} "
+            f"final_pegs {final_pegs}"
+        )
+        print("-" * 40)
+
+    for sid in shape_ids:
+        if not rewards[sid]:
+            continue
+        avg_reward = sum(rewards[sid]) / len(rewards[sid])
+        print(
+            f"[Summary] shape={sid} episodes={len(rewards[sid])} "
+            f"avg reward {avg_reward:.2f}"
+        )
 
 
 def export_model(
@@ -903,33 +1285,68 @@ def export_model(
 ) -> None:
     """Export a trained model to ONNX for browser execution."""
     shape_ctxs = build_shape_contexts(SHAPES)
+    if shape_id == ALL_SHAPES_ID:
+        shared_load = (
+            Path(load_path)
+            if load_path is not None
+            else get_default_model_path(ALL_SHAPES_ID)
+        )
+        for sid in sorted(shape_ctxs.keys()):
+            print(f"=== Exporting shape '{sid}' ===")
+            _export_single_shape(
+                shape_ctxs[sid], shared_load, output_path, inline_weights
+            )
+        return
     if shape_id not in shape_ctxs:
         raise ValueError(f"Unknown shape '{shape_id}'")
-    shape_ctx = shape_ctxs[shape_id]
+    _export_single_shape(shape_ctxs[shape_id], load_path, output_path, inline_weights)
 
-    if load_path is None:
-        load_path = get_default_model_path(shape_id)
-    load_path = Path(load_path)
-    if not load_path.exists():
-        raise FileNotFoundError(f"Model checkpoint not found: {load_path}")
 
-    q_net = TokenAttentionQNetwork(shape_ctx).to("cpu")
-    checkpoint = torch.load(load_path, map_location="cpu")
+def _export_single_shape(
+    shape_ctx: ShapeContext,
+    load_path: Path | str | None,
+    output_path: Path | str | None,
+    inline_weights: bool,
+) -> None:
+    shape_id = shape_ctx.shape.id
+    model_path = (
+        get_default_model_path(shape_id) if load_path is None else Path(load_path)
+    )
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model checkpoint not found: {model_path}")
+
+    q_net = TokenAttentionQNetwork().to("cpu")
+    checkpoint = torch.load(model_path, map_location="cpu")
     if isinstance(checkpoint, dict) and "model_state" in checkpoint:
-        q_net.load_state_dict(checkpoint["model_state"])
+        q_net.load_state_dict(checkpoint["model_state"], strict=False)
     else:
-        q_net.load_state_dict(checkpoint)
+        q_net.load_state_dict(checkpoint, strict=False)
     q_net.eval()
 
     if output_path is None:
-        output_path = load_path.with_suffix(".onnx")
-    output_path = Path(output_path)
+        resolved_output = model_path.with_suffix(".onnx")
+    else:
+        resolved_output = Path(output_path)
+        if resolved_output.is_dir():
+            resolved_output = resolved_output / f"{model_path.stem}_{shape_id}.onnx"
 
-    dummy_state = torch.zeros(1, q_net.num_holes, dtype=torch.float32)
+    class _ShapeBoundModel(nn.Module):
+        def __init__(self, net: TokenAttentionQNetwork, ctx: ShapeContext):
+            super().__init__()
+            self.net = net
+            self.shape_ctx = ctx
+
+        def forward(self, state: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+            return self.net(state, self.shape_ctx)
+
+    dummy_state = torch.zeros(
+        1, len(shape_ctx.shape.holes), dtype=torch.float32, device="cpu"
+    )
+    export_model_module = _ShapeBoundModel(q_net, shape_ctx)
     torch.onnx.export(
-        q_net,
+        export_model_module,
         dummy_state,
-        output_path,
+        resolved_output,
         input_names=["state"],
         output_names=["q_values"],
         dynamic_axes={"state": {0: "batch"}, "q_values": {0: "batch"}},
@@ -937,7 +1354,7 @@ def export_model(
         export_params=True,
         external_data=not inline_weights,
     )
-    print(f"Exported ONNX model to {output_path}")
+    print(f"Exported ONNX model for '{shape_id}' to {resolved_output}")
 
 
 def main() -> None:
@@ -945,7 +1362,7 @@ def main() -> None:
     _TRAIN_ARGS.add_argument(
         "--shape",
         "-s",
-        choices=sorted(SHAPES.keys()),
+        choices=sorted(list(SHAPES.keys()) + [ALL_SHAPES_ID]),
         default=DEFAULT_SHAPE_ID,
         help="Board shape to operate on.",
     )
@@ -987,7 +1404,7 @@ def main() -> None:
     _INFER_ARGS.add_argument(
         "--shape",
         "-s",
-        choices=sorted(SHAPES.keys()),
+        choices=sorted(list(SHAPES.keys()) + [ALL_SHAPES_ID]),
         default=DEFAULT_SHAPE_ID,
         help="Board shape to operate on.",
     )
@@ -1032,7 +1449,7 @@ def main() -> None:
     _EXPORT_ARGS.add_argument(
         "--shape",
         "-s",
-        choices=sorted(SHAPES.keys()),
+        choices=sorted(list(SHAPES.keys()) + [ALL_SHAPES_ID]),
         default=DEFAULT_SHAPE_ID,
         help="Board shape to operate on.",
     )

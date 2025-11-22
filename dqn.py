@@ -11,19 +11,12 @@ class TokenAttentionQNetwork(nn.Module):
 
     def __init__(
         self,
-        shape_ctx: ShapeContext,
         d_model: int = 48,
         n_heads: int = 4,
         n_layers: int = 2,
         action_hidden: int = 64,
     ):
         super().__init__()
-
-        self.num_holes = len(shape_ctx.shape.holes)
-        self.num_actions = shape_ctx.actions.shape[0]
-
-        self.register_buffer("actions_idx", shape_ctx.actions[:, :3])
-        self.register_buffer("coords", shape_ctx.coords)
 
         self.coord_embed = nn.Linear(2, d_model, bias=False)
         self.occ_embed = nn.Linear(1, d_model)
@@ -45,19 +38,22 @@ class TokenAttentionQNetwork(nn.Module):
             nn.Linear(action_hidden, 1),
         )
 
-    def forward(self, state: torch.Tensor) -> torch.Tensor:
+    def forward(self, state: torch.Tensor, shape_ctx: ShapeContext) -> torch.Tensor:
         B, N = state.shape
-        assert N == self.num_holes
+        assert N == len(shape_ctx.shape.holes)
+
+        coords = shape_ctx.coords.to(state.device)
+        actions_idx = shape_ctx.actions.to(state.device)
 
         occ_emb = self.occ_embed(state.unsqueeze(-1))
-        coord_emb = self.coord_embed(self.coords.unsqueeze(0).expand(B, -1, -1))
+        coord_emb = self.coord_embed(coords.unsqueeze(0).expand(B, -1, -1))
 
         tokens = self.token_proj(torch.cat([occ_emb, coord_emb], dim=-1))
         encoded = self.encoder(tokens)
 
-        frm_idx = self.actions_idx[:, 0]
-        to_idx = self.actions_idx[:, 1]
-        jump_idx = self.actions_idx[:, 2]
+        frm_idx = actions_idx[:, 0]
+        to_idx = actions_idx[:, 1]
+        jump_idx = actions_idx[:, 2]
 
         frm_emb = encoded[:, frm_idx, :]
         to_emb = encoded[:, to_idx, :]
