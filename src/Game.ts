@@ -415,6 +415,7 @@ export class KongmingGame {
   }
 
   private handleHoleClick(key: string, event: MouseEvent): void {
+    this.ensureBoardInteractive();
     if (performance.now() < this.skipClickUntil) {
       event.preventDefault();
       return;
@@ -510,6 +511,7 @@ export class KongmingGame {
   }
 
   private startPegDrag(event: PointerEvent, key: string): void {
+    this.ensureBoardInteractive();
     if (!this.pegs.has(key)) return;
     this.stopAutoPlay();
     if (!this.pickablePegs.has(key)) {
@@ -525,6 +527,7 @@ export class KongmingGame {
     this.createGhostPeg(event);
     document.addEventListener('pointermove', this.boundDragMove);
     document.addEventListener('pointerup', this.boundDragEnd);
+    document.addEventListener('pointercancel', this.boundDragEnd);
     event.preventDefault();
   }
 
@@ -558,6 +561,7 @@ export class KongmingGame {
     this.removeGhostPeg();
     document.removeEventListener('pointermove', this.boundDragMove);
     document.removeEventListener('pointerup', this.boundDragEnd);
+    document.removeEventListener('pointercancel', this.boundDragEnd);
     if (this.dragMoved) {
       this.skipClickUntil = performance.now() + 200;
     }
@@ -1199,6 +1203,12 @@ export class KongmingGame {
   private dropSolverOverlay(): void {
     this.clearSolverLines();
     this.boardWrapper.classList.remove('solver-busy');
+  }
+
+  private ensureBoardInteractive(): void {
+    if (!this.solverRunning) {
+      this.boardWrapper.classList.remove('solver-busy');
+    }
   }
 
   private refreshHelperState(): void {
