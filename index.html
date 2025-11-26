@@ -681,6 +681,11 @@
 			body.theme-dark .auto-actions button:hover {
 				color: #ffffff;
 			}
+			.auto-actions button:disabled {
+				opacity: 0.45;
+				cursor: not-allowed;
+				color: inherit;
+			}
 			.ai-mode-toggle {
 				display: inline-flex;
 				align-items: center;
@@ -1469,7 +1474,7 @@
 			<div class="board-actions" id="board-actions">
 				<div class="board-buttons">
 					<button id="reset" type="button" aria-label="Reset the Peg Solitaire board">Reset</button>
-					<button id="shape" type="button" aria-label="Change board shape">Shape</button>
+					<button id="shape" type="button" aria-label="Change board shape">Change board</button>
 					<button id="theme" type="button" aria-label="Switch theme">Theme</button>
 					<button id="undo" type="button" aria-label="Undo last move">Undo</button>
 				</div>
@@ -1479,9 +1484,9 @@
 			<button id="helper-toggle" type="button" aria-label="Toggle helper hints">Helper (off)</button>
 		</div> -->
 			<div class="auto-actions hidden" id="auto-actions">
-				<label class="ai-mode-toggle" id="ai-mode-toggle-label">
-					<input type="checkbox" id="ai-mode-toggle" />
-					<span>AI mode (cross)</span>
+					<label class="ai-mode-toggle" id="ai-mode-toggle-label">
+						<input type="checkbox" id="ai-mode-toggle" checked />
+					<span>AI mode</span>
 				</label>
 				<button id="auto-solve" type="button" aria-label="Auto-solve the puzzle">Solve</button>
 				<button id="auto-play" type="button" aria-label="Play the auto-solve plan">Play</button>

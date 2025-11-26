@@ -1,0 +1,7 @@
+torch
+numpy
+numba
+onnxruntime
+onnx
+onnxscript
+tensorboard

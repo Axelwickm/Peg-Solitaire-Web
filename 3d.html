@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<title>3D Peg Solitaire</title>
+		<style>
+			html, body {
+				margin: 0;
+				padding: 0;
+				overflow: hidden;
+				background: #050509;
+				color: #eee;
+				font-family: system-ui, sans-serif;
+			}
+			#ui {
+				position: fixed;
+				top: 10px;
+				left: 10px;
+				background: rgba(0,0,0,0.6);
+				padding: 8px 12px;
+				border-radius: 6px;
+				font-size: 14px;
+				z-index: 10;
+			}
+			#ui button {
+				margin-right: 8px;
+				padding: 4px 10px;
+				border-radius: 4px;
+				border: 1px solid #666;
+				background: #111;
+				color: #eee;
+				cursor: pointer;
+			}
+			#ui button:hover {
+				background: #222;
+			}
+		</style>
+		<script type="importmap">
+			{
+				"imports": {
+					"three": "https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js"
+				}
+			}
+		</script>
+	</head>
+	<body>
+		<div id="ui">
+			<button id="resetBtn">Reset</button>
+			<span>Click a ball to select, then click a valid empty spot to jump.</span>
+		</div>
+		<canvas id="c"></canvas>
+
+		<script type="module">
+			import * as THREE from "three";
+			import { TrackballControls } from "https://cdn.jsdelivr.net/npm/three@0.164.0/examples/jsm/controls/TrackballControls.js";
+			
+			/* everything inside here is unchanged from before */
+			
+			const canvas = document.getElementById("c");
+			const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+			renderer.setPixelRatio(window.devicePixelRatio);
+			
+			const scene = new THREE.Scene();
+			scene.background = new THREE.Color(0x050509);
+			
+			const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+			camera.position.set(8, 10, 12);
+			
+			const controls = new TrackballControls(camera, renderer.domElement);
+			controls.target.set(0, 0, 0);
+			controls.rotateSpeed = 0.9;
+			controls.zoomSpeed = 0.3;
+			controls.panSpeed = 0.15;
+			controls.staticMoving = false;
+			controls.dynamicDampingFactor = 0.12;
+			
+			const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+			scene.add(ambient);
+			
+			const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+			dirLight.position.set(5, 10, 7);
+			scene.add(dirLight);
+
+			const fillLight = new THREE.DirectionalLight(0xdfe8ff, 0.45);
+			fillLight.position.set(-6, 8, -9);
+			scene.add(fillLight);
+			
+			const SIZE = 7;
+			const MID = (SIZE - 1) / 2;
+			const boardMask = [];
+			for (let x = 0; x < SIZE; x++) {
+				boardMask[x] = [];
+				for (let y = 0; y < SIZE; y++) {
+					boardMask[x][y] = [];
+					for (let z = 0; z < SIZE; z++) {
+						const closeAxes = [x, y, z].map(coord => Math.abs(coord - MID) <= 1);
+						boardMask[x][y][z] = closeAxes.filter(Boolean).length >= 2;
+					}
+				}
+			}
+				
+				let boardState;
+				let pegMeshes = {};
+				let holeMeshes = {};
+				const pegGroup = new THREE.Group();
+				const holeGroup = new THREE.Group();
+				const highlightGroup = new THREE.Group();
+				scene.add(pegGroup);
+				scene.add(holeGroup);
+				scene.add(highlightGroup);
+				
+				const SPACING = 1.25;
+				const RADIUS = 0.45;
+				
+				const pegMaterial = new THREE.MeshStandardMaterial({
+					color: 0xdd3355,
+					metalness: 0.08,
+					roughness: 0.78,
+				});
+				const pegMaterialIdle = new THREE.MeshStandardMaterial({
+					color: 0x858585,
+					metalness: 0.02,
+					roughness: 0.9,
+				});
+				const pegMaterialSelected = new THREE.MeshStandardMaterial({
+					color: 0x55ddff,
+					metalness: 0.08,
+					roughness: 0.65,
+					emissive: 0x116688,
+					emissiveIntensity: 0.4,
+				});
+				const outlineGeo = new THREE.SphereGeometry(RADIUS * 1.08, 12, 12);
+				const outlineMaterial = new THREE.MeshBasicMaterial({
+					color: 0xffffff,
+					side: THREE.BackSide,
+				});
+						
+						const holeMaterial = new THREE.MeshBasicMaterial({
+							color: 0x8888ff,
+							transparent: true,
+							opacity: 0.0
+							});
+			const highlightOffsets = [
+				{ dx: 2, dy: 0, dz: 0 },
+				{ dx: -2, dy: 0, dz: 0 },
+				{ dx: 0, dy: 2, dz: 0 },
+				{ dx: 0, dy: -2, dz: 0 },
+				{ dx: 0, dy: 0, dz: 2 },
+				{ dx: 0, dy: 0, dz: -2 },
+			];
+				const highlightGeo = new THREE.SphereGeometry(0.28, 16, 16);
+				const highlightMaterial = new THREE.MeshBasicMaterial({
+					color: 0xffffff,
+					transparent: true,
+					opacity: 0.85,
+					depthTest: false,
+					depthWrite: false,
+				});
+				let highlightMeshes = [];
+				const highlightCameraOffset = new THREE.Vector3();
+							
+			function coordKey(x,y,z){ return x + "," + y + "," + z; }
+
+			function worldPosFor(x,y,z){
+				const offset = (SIZE - 1) / 2;
+				const placement = new THREE.Vector3(
+					(x - offset) * SPACING,
+					(y - offset) * SPACING,
+					(z - offset) * SPACING
+				);
+				return placement;
+			}
+
+			function getGradientColor(x, z) {
+				const range = SIZE - 1;
+				const normX = range > 0 ? x / range : 0;
+				const normZ = range > 0 ? z / range : 0;
+				const red = 0.4 + normX * 0.55;
+				const blue = 0.25 + normZ * 0.7;
+				const green = 0.25 + (normX + normZ) * 0.1;
+				return new THREE.Color(red, Math.min(green, 0.85), Math.min(blue, 0.95));
+			}
+
+			function clearHighlights() {
+				for (const mesh of highlightMeshes) {
+					highlightGroup.remove(mesh);
+				}
+				highlightMeshes = [];
+			}
+
+			function showHighlightsForPeg(peg) {
+				clearHighlights();
+				if (!peg) return;
+				const { x, y, z } = peg.userData;
+				for (const offset of highlightOffsets) {
+					const tx = x + offset.dx;
+					const ty = y + offset.dy;
+					const tz = z + offset.dz;
+					if (!isValidMove(x, y, z, tx, ty, tz)) continue;
+						const marker = new THREE.Mesh(highlightGeo, highlightMaterial);
+						const basePos = worldPosFor(tx, ty, tz);
+						marker.position.copy(basePos);
+						const towardCamera = highlightCameraOffset
+							.subVectors(camera.position, basePos)
+							.normalize()
+							.multiplyScalar(0.4);
+						marker.position.add(towardCamera);
+						marker.renderOrder = 2;
+					marker.userData = { tx, ty, tz };
+					highlightGroup.add(marker);
+					highlightMeshes.push(marker);
+				}
+			}
+
+			function pegHasMove(x, y, z) {
+				for (const offset of highlightOffsets) {
+					const tx = x + offset.dx;
+					const ty = y + offset.dy;
+					const tz = z + offset.dz;
+					if (isValidMove(x, y, z, tx, ty, tz)) {
+						return true;
+					}
+				}
+				return false;
+			}
+
+			function applyPegAppearance(peg, isSelected = false) {
+				if (!peg) return;
+				const { x, y, z } = peg.userData;
+				const movable = pegHasMove(x, y, z);
+				peg.userData.movable = movable;
+				const outline = peg.userData?.outline;
+				if (outline) {
+					outline.visible = movable;
+				}
+				if (isSelected) {
+					const mat = pegMaterialSelected.clone();
+					const gradient = getGradientColor(x, z);
+					mat.color.lerp(gradient, 0.4);
+					peg.material = mat;
+					return;
+				}
+				const baseColor = getGradientColor(x, z);
+				if (movable) {
+					const mat = pegMaterial.clone();
+					mat.color.copy(baseColor);
+					peg.material = mat;
+				} else {
+					const mat = pegMaterialIdle.clone();
+					const grey = new THREE.Color(0x8a8a8a);
+					baseColor.lerp(grey, 0.6);
+					mat.color.copy(baseColor);
+					peg.material = mat;
+				}
+			}
+							
+			function initBoardState() {
+				boardState = [];
+				for (let x = 0; x < SIZE; x++) {
+					boardState[x] = [];
+					for (let y = 0; y < SIZE; y++) {
+						boardState[x][y] = [];
+						for (let z = 0; z < SIZE; z++) {
+							boardState[x][y][z] = boardMask[x][y][z] ? "peg" : null;
+						}
+					}
+				}
+				boardState[MID][MID][MID] = "empty";
+			}
+							
+							function clearMeshes() {
+								for (const k in pegMeshes) pegGroup.remove(pegMeshes[k]);
+								for (const k in holeMeshes) holeGroup.remove(holeMeshes[k]);
+								pegMeshes = {};
+								holeMeshes = {};
+							}
+							
+			function buildMeshes() {
+				clearMeshes();
+				const pegGeo = new THREE.SphereGeometry(RADIUS, 32, 32);
+				const holeGeo = new THREE.SphereGeometry(0.1, 12, 12);
+
+				for (let x = 0; x < SIZE; x++) {
+					for (let y = 0; y < SIZE; y++) {
+						for (let z = 0; z < SIZE; z++) {
+							if (!boardMask[x][y][z]) continue;
+							const pos = worldPosFor(x, y, z);
+
+							if (boardState[x][y][z] === "peg") {
+								const peg = new THREE.Mesh(pegGeo, pegMaterial.clone());
+								peg.position.copy(pos);
+								const outline = new THREE.Mesh(outlineGeo, outlineMaterial);
+								outline.visible = false;
+								peg.add(outline);
+								peg.userData = { x, y, z, type: "peg", outline };
+								applyPegAppearance(peg, false);
+								pegMeshes[coordKey(x,y,z)] = peg;
+								pegGroup.add(peg);
+							}
+
+							const hole = new THREE.Mesh(holeGeo, holeMaterial);
+							hole.position.copy(pos);
+							hole.userData = { x, y, z, type: "hole" };
+							holeMeshes[coordKey(x,y,z)] = hole;
+							holeGroup.add(hole);
+						}
+					}
+				}
+			}
+							
+			function isValidMove(fx,fy,fz,tx,ty,tz){
+				if (
+					fx < 0 || fx >= SIZE ||
+					fy < 0 || fy >= SIZE ||
+					fz < 0 || fz >= SIZE ||
+					tx < 0 || tx >= SIZE ||
+					ty < 0 || ty >= SIZE ||
+					tz < 0 || tz >= SIZE
+				) {
+					return false;
+				}
+				if (!boardMask[fx][fy][fz] || !boardMask[tx][ty][tz]) return false;
+				if (boardState[fx][fy][fz] !== "peg") return false;
+				if (boardState[tx][ty][tz] !== "empty") return false;
+
+				const dx = tx - fx;
+				const dy = ty - fy;
+				const dz = tz - fz;
+				const axisDiffs = [Math.abs(dx), Math.abs(dy), Math.abs(dz)].filter(n => n !== 0);
+				if (axisDiffs.length !== 1 || axisDiffs[0] !== 2) return false;
+
+				const mx = (fx + tx) / 2;
+				const my = (fy + ty) / 2;
+				const mz = (fz + tz) / 2;
+
+				return boardState[mx][my][mz] === "peg";
+			}
+							
+			function applyMove(fx,fy,fz,tx,ty,tz){
+				let mx, my, mz;
+				if (Math.abs(tx - fx) === 2) {
+					mx = (fx + tx) / 2;
+					my = fy;
+					mz = fz;
+				} else if (Math.abs(ty - fy) === 2) {
+					mx = fx;
+					my = (fy + ty) / 2;
+					mz = fz;
+				} else {
+					mx = fx;
+					my = fy;
+					mz = (fz + tz) / 2;
+				}
+
+				boardState[fx][fy][fz] = "empty";
+				boardState[mx][my][mz] = "empty";
+				boardState[tx][ty][tz] = "peg";
+
+				buildMeshes();
+
+				return coordKey(tx, ty, tz);
+			}
+							
+			let selectedPeg = null;
+			function deselectCurrentPeg() {
+				if (!selectedPeg) return;
+				const prev = selectedPeg;
+				selectedPeg = null;
+				applyPegAppearance(prev, false);
+			}
+			function setSelectedPeg(m){
+				if (!m) {
+					clearHighlights();
+					deselectCurrentPeg();
+					return;
+				}
+				if (selectedPeg === m) {
+					clearHighlights();
+					deselectCurrentPeg();
+					return;
+				}
+				deselectCurrentPeg();
+				selectedPeg = m;
+				applyPegAppearance(selectedPeg, true);
+				showHighlightsForPeg(selectedPeg);
+			}
+							
+							const raycaster = new THREE.Raycaster();
+							const mouse = new THREE.Vector2();
+							
+							function onPointerDown(ev){
+								const rect = renderer.domElement.getBoundingClientRect();
+								mouse.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+								mouse.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+
+								raycaster.setFromCamera(mouse, camera);
+
+								if (selectedPeg) {
+									const hits = raycaster.intersectObjects(highlightGroup.children);
+									if (hits.length > 0) {
+										const marker = hits[0].object;
+										const fx = selectedPeg.userData.x;
+										const fy = selectedPeg.userData.y;
+										const fz = selectedPeg.userData.z;
+										const tx = marker.userData.tx;
+										const ty = marker.userData.ty;
+										const tz = marker.userData.tz;
+										if (isValidMove(fx, fy, fz, tx, ty, tz)) {
+											const targetKey = applyMove(fx, fy, fz, tx, ty, tz);
+											const movedPeg = pegMeshes[targetKey];
+											setSelectedPeg(movedPeg ?? null);
+										}
+										return;
+									}
+								}
+
+								let hits = raycaster.intersectObjects(pegGroup.children);
+								if (hits.length > 0) {
+									const m = hits[0].object;
+									if (!m.userData.movable) {
+										return;
+									}
+									setSelectedPeg(selectedPeg === m ? null : m);
+									return;
+								}
+
+								if (selectedPeg) {
+									hits = raycaster.intersectObjects(holeGroup.children);
+									if (hits.length > 0) {
+										const h = hits[0].object;
+										const fx = selectedPeg.userData.x;
+										const fy = selectedPeg.userData.y;
+										const fz = selectedPeg.userData.z;
+										const tx = h.userData.x;
+										const ty = h.userData.y;
+										const tz = h.userData.z;
+										if (isValidMove(fx, fy, fz, tx, ty, tz)) {
+											const targetKey = applyMove(fx, fy, fz, tx, ty, tz);
+											const movedPeg = pegMeshes[targetKey];
+											setSelectedPeg(movedPeg ?? null);
+										}
+									}
+								}
+							}
+							renderer.domElement.addEventListener("pointerdown", onPointerDown);
+							
+							function onResize(){
+								const w = window.innerWidth;
+								const h = window.innerHeight;
+								renderer.setSize(w, h);
+								camera.aspect = w / h;
+								camera.updateProjectionMatrix();
+							}
+							window.addEventListener("resize", onResize);
+							
+							document.getElementById("resetBtn").addEventListener("click", () => {
+								initBoardState();
+								buildMeshes();
+								setSelectedPeg(null);
+								});
+								
+								function animate(){
+									requestAnimationFrame(animate);
+									controls.update();
+									renderer.render(scene, camera);
+								}
+								
+								onResize();
+								initBoardState();
+								buildMeshes();
+								animate();
+		</script>
+	</body>
+</html>

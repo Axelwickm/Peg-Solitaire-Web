@@ -1,10 +1,12 @@
 import * as ort from 'onnxruntime-web';
 
 import { SolverMove, SolverResult } from './BfidaSolver';
-import { BoardShape, shapes } from '../shapes';
+import { BoardShape } from '../shapes';
 
-const MODEL_PATH = '/static/models/dqn_kongming_cross.onnx';
+const buildModelPath = (shapeId: string) => `/static/models/peg_solitaire_dqn_${shapeId}.onnx`;
 const MAX_DURATION_MS = 60000;
+const MAX_BATCHED_STATES = 16;
+const YIELD_INTERVAL_MS = 200;
 const ORT_WASM_BASE_PATH = '/static/onnx';
 
 type ActionDef = {
@@ -29,30 +31,44 @@ type CandidateEntry = {
   stateHistory: bigint[];
 };
 
+async function yieldToUi(): Promise<void> {
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
+}
+
+export type AiSolverProgress = {
+  bestMoves: SolverMove[];
+  nodesExplored: number;
+};
+
 export type AiSolverOptions = {
   maxDurationMs?: number;
   abortSignal?: AbortSignal;
+  onProgress?: (progress: AiSolverProgress) => void;
+  guessMode?: boolean;
+  guessThreshold?: number;
 };
 
-const crossShape: BoardShape = (() => {
-  const shape = shapes.find(entry => entry.id === 'cross');
-  if (!shape) {
-    throw new Error('Cross shape definition missing for AI solver.');
-  }
-  return shape;
-})();
+type ShapeSolverData = {
+  shape: BoardShape;
+  holeToIndex: Map<string, number>;
+  bitMasks: bigint[];
+  actionDefs: ActionDef[];
+  centerIndex: number;
+};
 
-const holeToIndex = new Map<string, number>();
-const bitMasks: bigint[] = [];
-crossShape.holes.forEach((hole, index) => {
-  holeToIndex.set(hole, index);
-  bitMasks.push(1n << BigInt(index));
-});
+const solverDataByShape = new Map<string, ShapeSolverData>();
 
-const actionDefs: ActionDef[] = (() => {
-  const defs: ActionDef[] = [];
+function buildSolverData(shape: BoardShape): ShapeSolverData {
+  const holeToIndex = new Map<string, number>();
+  const bitMasks: bigint[] = [];
+  shape.holes.forEach((hole, index) => {
+    holeToIndex.set(hole, index);
+    bitMasks.push(1n << BigInt(index));
+  });
+
+  const actionDefs: ActionDef[] = [];
   let actionIndex = 0;
-  crossShape.allowedMoves.forEach((targets, from) => {
+  shape.allowedMoves.forEach((targets, from) => {
     const fromIndex = holeToIndex.get(from);
     if (fromIndex === undefined) return;
     targets.forEach((jump, to) => {
@@ -61,7 +77,7 @@ const actionDefs: ActionDef[] = (() => {
       if (toIndex === undefined || jumpIndex === undefined) {
         return;
       }
-      defs.push({
+      actionDefs.push({
         index: actionIndex++,
         fromIndex,
         toIndex,
@@ -70,52 +86,74 @@ const actionDefs: ActionDef[] = (() => {
       });
     });
   });
-  return defs;
-})();
 
-const centerIndex = holeToIndex.get(crossShape.empty) ?? 0;
+  const centerIndex = holeToIndex.get(shape.empty) ?? 0;
+  return {
+    shape,
+    holeToIndex,
+    bitMasks,
+    actionDefs,
+    centerIndex,
+  };
+}
 
-let sessionPromise: Promise<ort.InferenceSession> | null = null;
+function getSolverData(shape: BoardShape): ShapeSolverData {
+  const cached = solverDataByShape.get(shape.id);
+  if (cached) return cached;
+  const data = buildSolverData(shape);
+  solverDataByShape.set(shape.id, data);
+  return data;
+}
+
+const sessionPromises = new Map<string, Promise<ort.InferenceSession>>();
 
 ort.env.wasm.wasmPaths = {
   wasm: `${ORT_WASM_BASE_PATH}/ort-wasm-simd-threaded.jsep.wasm`,
   mjs: `${ORT_WASM_BASE_PATH}/ort-wasm-simd-threaded.jsep.mjs`,
 };
 
-async function getSession(): Promise<ort.InferenceSession> {
-  if (!sessionPromise) {
-    sessionPromise = ort.InferenceSession.create(MODEL_PATH, {
+async function getSession(shape: BoardShape): Promise<ort.InferenceSession> {
+  const modelPath = buildModelPath(shape.id);
+  let promise = sessionPromises.get(modelPath);
+  if (!promise) {
+    promise = ort.InferenceSession.create(modelPath, {
       executionProviders: ['wasm'],
     });
+    sessionPromises.set(modelPath, promise);
   }
-  return sessionPromise;
+  try {
+    return await promise;
+  } catch (error) {
+    sessionPromises.delete(modelPath);
+    throw error;
+  }
 }
 
-function toStateBits(pegs: Set<string>): bigint {
+function toStateBits(pegs: Set<string>, data: ShapeSolverData): bigint {
   let state = 0n;
   pegs.forEach(cell => {
-    const index = holeToIndex.get(cell);
+    const index = data.holeToIndex.get(cell);
     if (index !== undefined) {
-      state |= bitMasks[index];
+      state |= data.bitMasks[index];
     }
   });
   return state;
 }
 
-function hasPeg(state: bigint, index: number): boolean {
-  return (state & bitMasks[index]) !== 0n;
+function hasPeg(state: bigint, index: number, data: ShapeSolverData): boolean {
+  return (state & data.bitMasks[index]) !== 0n;
 }
 
-function applyAction(state: bigint, action: ActionDef): bigint {
+function applyAction(state: bigint, action: ActionDef, data: ShapeSolverData): bigint {
   let next = state;
-  next &= ~bitMasks[action.fromIndex];
-  next &= ~bitMasks[action.jumpIndex];
-  next |= bitMasks[action.toIndex];
+  next &= ~data.bitMasks[action.fromIndex];
+  next &= ~data.bitMasks[action.jumpIndex];
+  next |= data.bitMasks[action.toIndex];
   return next;
 }
 
-function isSolved(state: bigint): boolean {
-  return popCount(state) === 1 && hasPeg(state, centerIndex);
+function isSolved(state: bigint, data: ShapeSolverData): boolean {
+  return popCount(state) === 1 && hasPeg(state, data.centerIndex, data);
 }
 
 function popCount(value: bigint): number {
@@ -128,20 +166,47 @@ function popCount(value: bigint): number {
   return count;
 }
 
-function isLegal(state: bigint, action: ActionDef): boolean {
-  return hasPeg(state, action.fromIndex) && hasPeg(state, action.jumpIndex) && !hasPeg(state, action.toIndex);
+function isLegal(state: bigint, action: ActionDef, data: ShapeSolverData): boolean {
+  return (
+    hasPeg(state, action.fromIndex, data) &&
+    hasPeg(state, action.jumpIndex, data) &&
+    !hasPeg(state, action.toIndex, data)
+  );
 }
 
 function historyIncludes(history: bigint[], target: bigint): boolean {
   return history.some(entry => entry === target);
 }
 
-function stateToTensor(state: bigint): ort.Tensor {
-  const buffer = new Float32Array(crossShape.holes.length);
-  for (let i = 0; i < buffer.length; i++) {
-    buffer[i] = hasPeg(state, i) ? 1 : 0;
+function applyMoveSequence(state: bigint, moves: SolverMove[], data: ShapeSolverData): bigint {
+  let current = state;
+  for (const move of moves) {
+    const fromIndex = data.holeToIndex.get(move.from);
+    const toIndex = data.holeToIndex.get(move.to);
+    const jumpIndex = data.holeToIndex.get(move.jump);
+    if (
+      fromIndex === undefined ||
+      toIndex === undefined ||
+      jumpIndex === undefined
+    ) {
+      continue;
+    }
+    current &= ~data.bitMasks[fromIndex];
+    current &= ~data.bitMasks[jumpIndex];
+    current |= data.bitMasks[toIndex];
   }
-  return new ort.Tensor('float32', buffer, [1, buffer.length]);
+  return current;
+}
+
+function writeStateToBuffer(
+  state: bigint,
+  data: ShapeSolverData,
+  target: Float32Array,
+  offset: number,
+): void {
+  for (let i = 0; i < data.bitMasks.length; i++) {
+    target[offset + i] = hasPeg(state, i, data) ? 1 : 0;
+  }
 }
 
 class CandidateQueue {
@@ -170,6 +235,76 @@ class CandidateQueue {
   }
 }
 
+type PendingEvaluation = {
+  state: bigint;
+  resolve: (values: Float32Array) => void;
+  reject: (error: unknown) => void;
+};
+
+class BatchedEvaluator {
+  private pending: PendingEvaluation[] = [];
+  private flushing = false;
+  private scheduled = false;
+
+  constructor(
+    private session: ort.InferenceSession,
+    private solverData: ShapeSolverData,
+    private maxBatchSize: number = MAX_BATCHED_STATES,
+  ) { }
+
+  public evaluate(state: bigint): Promise<Float32Array> {
+    return new Promise((resolve, reject) => {
+      this.pending.push({ state, resolve, reject });
+      this.scheduleFlush();
+    });
+  }
+
+  private scheduleFlush(): void {
+    if (this.scheduled) return;
+    this.scheduled = true;
+    queueMicrotask(() => this.flush());
+  }
+
+  private async flush(): Promise<void> {
+    if (this.flushing) return;
+    this.flushing = true;
+    this.scheduled = false;
+    try {
+      while (this.pending.length) {
+        const batch = this.pending.splice(0, this.maxBatchSize);
+        await this.runBatch(batch);
+      }
+    } finally {
+      this.flushing = false;
+      if (this.pending.length) {
+        this.scheduleFlush();
+      }
+    }
+  }
+
+  private async runBatch(batch: PendingEvaluation[]): Promise<void> {
+    const batchSize = batch.length;
+    const stateSize = this.solverData.shape.holes.length;
+    const actionSize = this.solverData.actionDefs.length;
+    const buffer = new Float32Array(batchSize * stateSize);
+    batch.forEach((entry, idx) => {
+      writeStateToBuffer(entry.state, this.solverData, buffer, idx * stateSize);
+    });
+    try {
+      const tensor = new ort.Tensor('float32', buffer, [batchSize, stateSize]);
+      const output = await this.session.run({ state: tensor });
+      const qValues = output.q_values.data as Float32Array;
+      batch.forEach((entry, idx) => {
+        const start = idx * actionSize;
+        const slice = qValues.subarray(start, start + actionSize);
+        entry.resolve(new Float32Array(slice));
+      });
+    } catch (error) {
+      batch.forEach(entry => entry.reject(error));
+    }
+  }
+}
+
 export class AiSolverAbortError extends Error {
   constructor() {
     super('AI solver aborted');
@@ -177,25 +312,23 @@ export class AiSolverAbortError extends Error {
   }
 }
 
-export async function solveCrossWithAi(
+export async function solveWithAi(
+  shape: BoardShape,
   pegPositions: Set<string>,
   options: AiSolverOptions = {},
 ): Promise<SolverResult> {
-  if (!crossShape) {
-    throw new Error('Cross shape unavailable for AI solver.');
-  }
+  const solverData = getSolverData(shape);
   const signal = options.abortSignal;
   const startTime = performance.now();
   const deadline = startTime + (options.maxDurationMs ?? MAX_DURATION_MS);
-  const session = await getSession();
-  const stateCache = new Map<bigint, ActionEval[]>();
-  const queue = new CandidateQueue();
-  const initialState = toStateBits(pegPositions);
-  const initialHistory: bigint[] = [initialState];
-  const initialPath: SolverMove[] = [];
-  let bestPath: SolverMove[] = [];
-  let bestPegCount = popCount(initialState);
-  let nodesExplored = 0;
+  const guessMode = options.guessMode ?? true;
+  const guessThreshold = options.guessThreshold ?? 400;
+  const session = await getSession(shape);
+  const evaluator = new BatchedEvaluator(session, solverData);
+  const initialState = toStateBits(pegPositions, solverData);
+  let totalNodesExplored = 0;
+  let committedMoves: SolverMove[] = [];
+  let committedState = initialState;
 
   const throwIfAborted = () => {
     if (signal?.aborted) {
@@ -203,147 +336,254 @@ export async function solveCrossWithAi(
     }
   };
 
-  const loadActions = async (state: bigint): Promise<ActionEval[]> => {
-    let cached = stateCache.get(state);
-    if (cached) {
-      return cached;
-    }
-    throwIfAborted();
-    nodesExplored += 1;
-    const tensor = stateToTensor(state);
-    const output = await session.run({ state: tensor });
-    const tensorOutput = output.q_values as ort.Tensor;
-    const data = tensorOutput.data as Float32Array;
-    const evals: ActionEval[] = [];
-    actionDefs.forEach(action => {
-      if (!isLegal(state, action)) return;
-      const nextState = applyAction(state, action);
-      evals.push({
-        def: action,
-        nextState,
-        qValue: data[action.index] ?? Number.NEGATIVE_INFINITY,
-        used: false,
-        queued: false,
+  type ChunkOutcome = {
+    solved: boolean;
+    solution: SolverMove[];
+    bestPath: SolverMove[];
+    nodesExplored: number;
+    reason: 'solved' | 'timeout' | 'exhausted' | 'budget';
+  };
+
+  const runChunk = async (rootState: bigint): Promise<ChunkOutcome> => {
+    const stateCache = new Map<bigint, ActionEval[]>();
+    const queue = new CandidateQueue();
+    let bestPath: SolverMove[] = [];
+    let bestPegCount = popCount(rootState);
+    let nodesExplored = 0;
+    let lastYieldTime = performance.now();
+    let latestPath: SolverMove[] = [];
+    const maxBranchExpansions = guessMode ? Math.max(0, guessThreshold - 1) : Number.POSITIVE_INFINITY;
+    let branchExpansions = 0;
+
+    const notifyProgress = () => {
+      if (options.onProgress) {
+        const combined = committedMoves.length
+          ? [...committedMoves, ...bestPath]
+          : [...bestPath];
+        options.onProgress({
+          bestMoves: combined,
+          nodesExplored: totalNodesExplored + nodesExplored,
+        });
+      }
+    };
+
+    const maybeYield = async (): Promise<void> => {
+      if (performance.now() - lastYieldTime >= YIELD_INTERVAL_MS) {
+        lastYieldTime = performance.now();
+        await yieldToUi();
+      }
+    };
+
+    const loadActions = async (state: bigint): Promise<ActionEval[]> => {
+      const cached = stateCache.get(state);
+      if (cached) {
+        return cached;
+      }
+      throwIfAborted();
+      nodesExplored += 1;
+      const qValues = await evaluator.evaluate(state);
+      const evals: ActionEval[] = [];
+      solverData.actionDefs.forEach(action => {
+        if (!isLegal(state, action, solverData)) return;
+        const nextState = applyAction(state, action, solverData);
+        evals.push({
+          def: action,
+          nextState,
+          qValue: qValues[action.index] ?? Number.NEGATIVE_INFINITY,
+          used: false,
+          queued: false,
+        });
       });
-    });
-    evals.sort((a, b) => b.qValue - a.qValue);
-    stateCache.set(state, evals);
-    return evals;
-  };
+      evals.sort((a, b) => b.qValue - a.qValue);
+      stateCache.set(state, evals);
+      return evals;
+    };
 
-  const enqueueAlternatives = (
-    actions: ActionEval[],
-    pathMoves: SolverMove[],
-    history: bigint[],
-  ): void => {
-    actions.forEach(action => {
-      if (action.used || action.queued) return;
-      action.queued = true;
-      queue.push({
-        action,
-        pathMoves: [...pathMoves],
-        stateHistory: [...history],
+    const enqueueAlternatives = (
+      actions: ActionEval[],
+      pathMoves: SolverMove[],
+      history: bigint[],
+    ): void => {
+      actions.forEach(action => {
+        if (action.used || action.queued) return;
+        action.queued = true;
+        queue.push({
+          action,
+          pathMoves: [...pathMoves],
+          stateHistory: [...history],
+        });
       });
-    });
-  };
+    };
 
-  const pickBestAction = async (
-    state: bigint,
-    pathMoves: SolverMove[],
-    history: bigint[],
-  ): Promise<ActionEval | null> => {
-    const actions = await loadActions(state);
-    const available = actions.filter(action => !action.used && !historyIncludes(history, action.nextState));
-    if (!available.length) {
-      return null;
-    }
-    const [best, ...rest] = available;
-    best.used = true;
-    enqueueAlternatives(rest, pathMoves, history);
-    return best;
-  };
+    const pickBestAction = async (
+      state: bigint,
+      pathMoves: SolverMove[],
+      history: bigint[],
+    ): Promise<ActionEval | null> => {
+      const actions = await loadActions(state);
+      const available = actions.filter(action => !action.used && !historyIncludes(history, action.nextState));
+      if (!available.length) {
+        return null;
+      }
+      const [best, ...rest] = available;
+      best.used = true;
+      enqueueAlternatives(rest, pathMoves, history);
+      return best;
+    };
 
-  const pursueGreedy = async (
-    startState: bigint,
-    pathMoves: SolverMove[],
-    history: bigint[],
-  ): Promise<{ solved: boolean; moves: SolverMove[]; finalState: bigint; timedOut: boolean }> => {
-    let currentState = startState;
-    let currentMoves = [...pathMoves];
-    let stateHistory = [...history];
-    // Track immediate improvement for starting state.
-    const startPegCount = popCount(currentState);
-    if (startPegCount < bestPegCount) {
-      bestPegCount = startPegCount;
-      bestPath = [...currentMoves];
+    const pursueGreedy = async (
+      startState: bigint,
+      pathMoves: SolverMove[],
+      history: bigint[],
+    ): Promise<{ solved: boolean; moves: SolverMove[]; finalState: bigint; reason: 'solved' | 'timeout' | 'deadend' }> => {
+      let currentState = startState;
+      let currentMoves = [...pathMoves];
+      let stateHistory = [...history];
+      const startPegCount = popCount(currentState);
+      if (startPegCount < bestPegCount) {
+        bestPegCount = startPegCount;
+        bestPath = [...currentMoves];
+        notifyProgress();
+      } else if (!bestPath.length) {
+        latestPath = [...currentMoves];
+      }
+      while (true) {
+        await maybeYield();
+        throwIfAborted();
+        if (performance.now() > deadline) {
+          return { solved: false, moves: currentMoves, finalState: currentState, reason: 'timeout' };
+        }
+        if (isSolved(currentState, solverData)) {
+          bestPath = [...currentMoves];
+          notifyProgress();
+          return { solved: true, moves: currentMoves, finalState: currentState, reason: 'solved' };
+        }
+        const action = await pickBestAction(currentState, currentMoves, stateHistory);
+        if (!action) {
+          return { solved: false, moves: currentMoves, finalState: currentState, reason: 'deadend' };
+        }
+        currentMoves = [...currentMoves, action.def.move];
+        const nextState = action.nextState;
+        stateHistory = [...stateHistory, nextState];
+        currentState = nextState;
+        const pegCount = popCount(currentState);
+        if (pegCount < bestPegCount) {
+          bestPegCount = pegCount;
+          bestPath = [...currentMoves];
+          notifyProgress();
+        } else if (!bestPath.length) {
+          latestPath = [...currentMoves];
+        }
+      }
+    };
+
+    let greedyResult = await pursueGreedy(rootState, [], [rootState]);
+    if (greedyResult.reason === 'solved') {
+      return {
+        solved: true,
+        solution: greedyResult.moves,
+        bestPath: greedyResult.moves,
+        nodesExplored,
+        reason: 'solved',
+      };
     }
+    if (greedyResult.reason === 'timeout') {
+      return {
+        solved: false,
+        solution: greedyResult.moves,
+        bestPath: bestPath.length ? bestPath : latestPath,
+        nodesExplored,
+        reason: 'timeout',
+      };
+    }
+    // Greedy search never hits a chunk budget; continue into queued alternatives.
+
+    let timedOut = false;
     while (true) {
+      await maybeYield();
       throwIfAborted();
       if (performance.now() > deadline) {
-        return { solved: false, moves: currentMoves, finalState: currentState, timedOut: true };
+        timedOut = true;
+        break;
       }
-      if (isSolved(currentState)) {
-        bestPath = [...currentMoves];
-        return { solved: true, moves: currentMoves, finalState: currentState, timedOut: false };
+      if (branchExpansions >= maxBranchExpansions) {
+        break;
       }
-      const action = await pickBestAction(currentState, currentMoves, stateHistory);
-      if (!action) {
-        return { solved: false, moves: currentMoves, finalState: currentState, timedOut: false };
+      const nextCandidate = queue.pop();
+      if (!nextCandidate) {
+        break;
       }
-      currentMoves = [...currentMoves, action.def.move];
-      const nextState = action.nextState;
-      stateHistory = [...stateHistory, nextState];
-      currentState = nextState;
-      const pegCount = popCount(currentState);
-      if (pegCount < bestPegCount) {
-        bestPegCount = pegCount;
-        bestPath = [...currentMoves];
+      const { action, pathMoves, stateHistory } = nextCandidate;
+      if (action.used) {
+        continue;
       }
+      action.used = true;
+      const nextMoves = [...pathMoves, action.def.move];
+      const nextHistory = [...stateHistory, action.nextState];
+      greedyResult = await pursueGreedy(action.nextState, nextMoves, nextHistory);
+      if (greedyResult.reason === 'solved') {
+        return {
+          solved: true,
+          solution: greedyResult.moves,
+          bestPath: greedyResult.moves,
+          nodesExplored,
+          reason: 'solved',
+        };
+      }
+      if (greedyResult.reason === 'timeout') {
+        return {
+          solved: false,
+          solution: greedyResult.moves,
+          bestPath: bestPath.length ? bestPath : latestPath,
+          nodesExplored,
+          reason: 'timeout',
+        };
+      }
+      branchExpansions += 1;
+      // Continue exploring queued alternatives until limits or queue exhaustion.
     }
+
+    return {
+      solved: false,
+      solution: [],
+      bestPath: bestPath.length ? bestPath : latestPath,
+      nodesExplored,
+      reason: timedOut ? 'timeout' : 'budget',
+    };
   };
 
-  let lastResult = await pursueGreedy(initialState, initialPath, initialHistory);
-  if (lastResult.solved) {
-    return buildResult(true, lastResult.moves, nodesExplored, startTime, 'solved');
-  }
-  if (lastResult.timedOut) {
-    return buildResult(false, bestPath, nodesExplored, startTime, 'timeout');
-  }
-
-  let timedOut = false;
   while (true) {
-    throwIfAborted();
-    if (performance.now() > deadline) {
-      timedOut = true;
-      break;
+    const outcome = await runChunk(committedState);
+    totalNodesExplored += outcome.nodesExplored;
+    if (outcome.solved) {
+      const finalMoves = [...committedMoves, ...outcome.solution];
+      return buildResult(true, finalMoves, totalNodesExplored, startTime, 'solved');
     }
-    const nextCandidate = queue.pop();
-    if (!nextCandidate) {
-      break;
+    if (guessMode && outcome.bestPath.length) {
+      const nextMove = outcome.bestPath[0];
+      if (nextMove) {
+        console.log('[AI] Committing partial plan move', {
+          committedDepth: committedMoves.length + 1,
+          nodesExplored: totalNodesExplored,
+          bestPathRemaining: outcome.bestPath.length,
+          move: nextMove,
+        });
+        committedMoves = [...committedMoves, nextMove];
+        committedState = applyMoveSequence(committedState, [nextMove], solverData);
+        continue;
+      }
     }
-    const { action, pathMoves, stateHistory } = nextCandidate;
-    if (action.used) {
-      continue;
-    }
-    action.used = true;
-    const nextMoves = [...pathMoves, action.def.move];
-    const nextHistory = [...stateHistory, action.nextState];
-    const pegCount = popCount(action.nextState);
-    if (pegCount < bestPegCount) {
-      bestPegCount = pegCount;
-      bestPath = [...nextMoves];
-    }
-    lastResult = await pursueGreedy(action.nextState, nextMoves, nextHistory);
-    if (lastResult.solved) {
-      return buildResult(true, lastResult.moves, nodesExplored, startTime, 'solved');
-    }
-    if (lastResult.timedOut) {
-      timedOut = true;
-      break;
-    }
+    const combinedBest = committedMoves.length
+      ? [...committedMoves, ...outcome.bestPath]
+      : [...outcome.bestPath];
+    return buildResult(
+      false,
+      combinedBest,
+      totalNodesExplored,
+      startTime,
+      outcome.reason === 'timeout' ? 'timeout' : 'exhausted',
+    );
   }
-
-  return buildResult(false, bestPath, nodesExplored, startTime, timedOut ? 'timeout' : 'exhausted');
 }
 
 function buildResult(

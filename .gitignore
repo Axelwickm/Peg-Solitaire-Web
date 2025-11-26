@@ -8,3 +8,4 @@ static/products.json
 *.log
 *.tsbuildinfo
 .env
+runs/

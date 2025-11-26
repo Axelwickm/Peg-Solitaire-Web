@@ -7,7 +7,7 @@ import {
   SolverSessionProgress,
   SolverOptions,
 } from './solver/BfidaSolver';
-import { solveCrossWithAi, AiSolverAbortError } from './solver/AiSolver';
+import { solveWithAi, AiSolverAbortError, AiSolverProgress } from './solver/AiSolver';
 
 const SOLVER_STALL_TIMEOUT_MS = 120000;
 const SOLVER_PERFECT_EXTRA_MS = 1000;
@@ -156,13 +156,12 @@ export class KongmingGame {
     if (this.aiModeEnabled === enabled) return;
     this.aiModeEnabled = enabled;
     this.clearSolverVisualization();
-    const suffix = this.currentShape.id === 'cross' ? '' : ' (cross board only)';
-    const status = enabled ? `AI mode enabled${suffix}` : 'AI mode disabled';
+    const status = enabled ? 'AI mode enabled' : 'AI mode disabled';
     this.updateStatusMessage(status);
   }
 
   public isAiModeEnabled(): boolean {
-    return this.aiModeEnabled && this.currentShape.id === 'cross';
+    return this.aiModeEnabled;
   }
 
   private render(): void {
@@ -899,7 +898,27 @@ export class KongmingGame {
       chunkMs,
     });
     if (this.isAiModeEnabled()) {
-      return this.startAiSolverRun();
+      try {
+        return await this.startAiSolverRun();
+      } catch (error) {
+        if (error instanceof AiSolverAbortError) {
+          const failure: SolverResult = {
+            solved: false,
+            moves: [],
+            bestMoves: [],
+            nodesExplored: 0,
+            durationMs: Math.max(0, performance.now() - this.solverStartTime),
+            reason: 'failed',
+          };
+          return failure;
+        }
+        console.error('[UI] AI solver error, falling back to classic solver', error);
+        this.setAiMode(false);
+        if (typeof document !== 'undefined') {
+          document.dispatchEvent(new Event('ai-mode:forced-off'));
+        }
+        return this.startAutoSolveVisualization(chunkMs);
+      }
     }
     const solver = new BidirectionalBfidaSolver(this.allowedMoves, this.buildSolverOptions());
     const session = solver.createSession(new Set(this.pegs), this.currentShape.empty);
@@ -991,11 +1010,30 @@ export class KongmingGame {
     const controller = new AbortController();
     this.aiSolveAbortController = controller;
     const pegs = new Set(this.pegs);
-    const solverPromise = solveCrossWithAi(pegs, {
+    const progressHandler = (progress: AiSolverProgress): void => {
+      const prevBest = this.solverBestMovesLength;
+      if (progress.bestMoves.length > prevBest) {
+        this.solverBestMovesLength = progress.bestMoves.length;
+        this.solverLastImprovementTime = performance.now();
+      }
+      if (progress.bestMoves.length > 0) {
+        this.autoplayPlanVersion += 1;
+        this.autoplayKnownPlanVersion = this.autoplayPlanVersion;
+        this.autoplayMoves = [...progress.bestMoves];
+        this.autoplayIndex = 0;
+      }
+      const color = progress.bestMoves.length ? 'lime' : 'red';
+      this.updateSolverLines(progress.bestMoves, color);
+      let status = `AI solving… ${progress.nodesExplored} evaluations`;
+      status += this.formatBestStatusSuffix();
+      this.setStatus(status);
+    };
+    const solverPromise = solveWithAi(this.currentShape, pegs, {
       maxDurationMs: 60000,
       abortSignal: controller.signal,
+      onProgress: progressHandler,
     });
-    return new Promise<SolverResult>(resolve => {
+    return new Promise<SolverResult>((resolve, reject) => {
       this.solverPromiseResolve = resolve;
       solverPromise
         .then(result => {
@@ -1011,25 +1049,12 @@ export class KongmingGame {
               ? 'failed'
               : 'completed';
           this.handleAiSolverCompletion(result, reason);
-          resolve(result);
           this.solverPromiseResolve = null;
+          resolve(result);
         })
         .catch(error => {
-          if (controller.signal.aborted || error instanceof AiSolverAbortError) {
-            return;
-          }
-          console.error('[UI] AI solver error', error);
-          const failure: SolverResult = {
-            solved: false,
-            moves: [],
-            bestMoves: [],
-            nodesExplored: 0,
-            durationMs: Math.max(0, performance.now() - this.solverStartTime),
-            reason: 'failed',
-          };
-          this.handleAiSolverCompletion(failure, 'failed');
-          resolve(failure);
           this.solverPromiseResolve = null;
+          reject(error);
         })
         .finally(() => {
           this.aiSolveAbortController = null;

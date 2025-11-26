@@ -98,6 +98,10 @@ const boardMenuButton = document.querySelector<HTMLButtonElement>(
 );
 const aiModeToggle = document.getElementById('ai-mode-toggle') as HTMLInputElement | null;
 const aiModeToggleLabel = document.getElementById('ai-mode-toggle-label');
+document.addEventListener('ai-mode:forced-off', () => {
+  if (!aiModeToggle) return;
+  aiModeToggle.checked = false;
+});
 const rightMenuPanel = document.querySelector<HTMLElement>('.menu-panel.right');
 let activeLeftMenu: string | null = 'board';
 let activeRightMenu: string | null = 'play';
@@ -149,6 +153,9 @@ function updateActionVisibility(context?: {
   boardActions?.classList.toggle('hidden', boardInactive);
   helperActions?.classList.toggle('hidden', activeRightMenu !== 'helper');
   autoActions?.classList.toggle('hidden', activeRightMenu !== 'auto');
+  if (activeRightMenu === 'auto' && autoPlayButton) {
+    autoPlayButton.disabled = !game.hasSolvePlan();
+  }
   (boardWrapper as HTMLElement | null)?.classList.toggle(
     'buy-mode',
     isMainSite && activeLeftMenu === 'buy',
@@ -255,19 +262,10 @@ if (autoPlayButton) {
 
 function updateAiModeAvailability(): void {
   if (!aiModeToggle) return;
-  const supportsAi = shapes[currentShapeIndex].id === 'cross';
-  aiModeToggle.disabled = !supportsAi;
-  aiModeToggleLabel?.classList.toggle('disabled', !supportsAi);
-  aiModeToggleLabel?.setAttribute(
-    'title',
-    supportsAi ? 'Use neural solver on the cross board' : 'AI mode is only available on the cross board',
-  );
-  if (!supportsAi) {
-    aiModeToggle.checked = false;
-    game.setAiMode(false);
-  } else {
-    game.setAiMode(aiModeToggle.checked);
-  }
+  aiModeToggle.disabled = false;
+  aiModeToggleLabel?.classList.remove('disabled');
+  aiModeToggleLabel?.setAttribute('title', 'Use neural solver on this board');
+  game.setAiMode(aiModeToggle.checked);
 }
 updateAiModeAvailability();
 
@@ -282,6 +280,9 @@ autoSolveButton?.addEventListener('click', () => {
   if (game.isSolverActive()) {
     game.clearSolverVisualization();
     return;
+  }
+  if (autoPlayButton) {
+    autoPlayButton.disabled = true;
   }
   autoSolveButton.textContent = 'Solving…';
   autoSolveButton.title = 'Solving…';
