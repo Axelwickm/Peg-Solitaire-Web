@@ -30,6 +30,7 @@ export class KongmingGame {
   private boardEl: HTMLElement;
   private statusEl: HTMLElement;
   private boardWrapper: HTMLElement;
+  private winOverlay: HTMLElement | null = null;
   private draggingPegKey: string | null = null;
   private dragTargetKey: string | null = null;
   private dragHoverKey: string | null = null;
@@ -100,6 +101,7 @@ export class KongmingGame {
     this.boardEl = boardEl;
     this.statusEl = statusEl;
     this.boardWrapper = boardWrapper;
+    this.winOverlay = boardWrapper.querySelector('.win-overlay');
     this.boundDragMove = event => this.handleDragMove(event);
     this.boundDragEnd = () => this.handleDragEnd();
     this.prepareShape(defaultShape);
@@ -204,17 +206,19 @@ export class KongmingGame {
         this.boardEl.appendChild(hole);
       }
     }
-    this.updateWinState();
+    const gameOver = this.pickablePegs.size === 0;
+    this.updateWinState(gameOver);
     this.updatePlayStatsDisplay();
-    if (this.pegs.size === 1) {
-      const desc = this.currentShape.finalTargetDescription;
-      this.setStatus(
-        this.pegs.has(this.currentShape.empty)
-          ? `Perfect! Final peg at the ${desc}.`
-          : 'Great! Only one peg left.',
-      );
-    } else if ([...this.validMoves()].length === 0) {
-      this.setStatus('No moves left. Reset to try again.');
+    if (gameOver) {
+      const pegsLeft = this.pegs.size;
+      if (pegsLeft === 1) {
+        const statusText = this.pegs.has(this.currentShape.empty)
+          ? 'Game over · Solved.'
+          : 'Game over · 1 left, not optimal.';
+        this.setStatus(statusText);
+      } else {
+        this.setStatus(`Game over · ${pegsLeft} left.`);
+      }
     }
   }
 
@@ -693,10 +697,50 @@ export class KongmingGame {
     this.ghostPeg = null;
   }
 
-  private updateWinState(): void {
+  private updateWinState(gameOver: boolean): void {
     const solved = this.pegs.size === 1 && this.pegs.has(this.currentShape.empty);
     this.solved = solved;
     this.boardWrapper.classList.toggle('solved', solved);
+    const overlay = this.winOverlay;
+    if (!overlay) {
+      return;
+    }
+    if (!gameOver) {
+      this.boardWrapper.dataset.gameOver = 'false';
+      overlay.removeAttribute('data-overlay-text');
+      this.boardWrapper.style.removeProperty('--game-overlay-border');
+      this.boardWrapper.style.removeProperty('--game-overlay-badge-bg');
+      this.boardWrapper.style.removeProperty('--game-overlay-badge-color');
+      return;
+    }
+    const pegsLeft = this.pegs.size;
+    let overlayText = 'Solved';
+    let borderColor = '#000000';
+    let badgeBg = '#000000';
+    let badgeColor = '#ffffff';
+    if (pegsLeft > 1) {
+      overlayText = `${pegsLeft} left`;
+      borderColor = '#3b0008';
+      badgeBg = '#3b0008';
+      badgeColor = '#ffffff';
+      this.boardWrapper.classList.remove('solved');
+    } else if (!solved) {
+      overlayText = '1 left, not optimal';
+      borderColor = '#c46200';
+      badgeBg = '#c46200';
+      badgeColor = '#1b1b1f';
+      this.boardWrapper.classList.remove('solved');
+    } else {
+      overlayText = 'Solved';
+      borderColor = '#000000';
+      badgeBg = '#000000';
+      badgeColor = '#ffffff';
+    }
+    overlay.setAttribute('data-overlay-text', overlayText);
+    this.boardWrapper.dataset.gameOver = 'true';
+    this.boardWrapper.style.setProperty('--game-overlay-border', borderColor);
+    this.boardWrapper.style.setProperty('--game-overlay-badge-bg', badgeBg);
+    this.boardWrapper.style.setProperty('--game-overlay-badge-color', badgeColor);
   }
 
   private prepareShape(shape: BoardShape): void {

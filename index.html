@@ -70,8 +70,8 @@
 				--solved-badge-color: #fff;
 				--drop-circle-color: rgba(255, 255, 255, 0.85);
 				--pickup-pulse-color: rgba(255, 255, 255, 0.9);
-				--board-size: clamp(210px, 75vw, 420px);
-				--peg-size: clamp(20px, 7.0vw, 33px);
+				--board-size: clamp(210px, 75vw, 600px);
+				--peg-size: clamp(20px, 7.0vw, 43px);
 			}
 			html {
 				height: 100%;
@@ -346,7 +346,7 @@
 			.board-wrapper .win-overlay {
 				position: absolute;
 				inset: 26px;
-				border: 4px solid var(--solved-border);
+				border: 4px solid var(--game-overlay-border, var(--solved-border));
 				border-radius: 18px;
 				z-index: 2;
 				pointer-events: none;
@@ -360,19 +360,19 @@
 				border-radius: 15%;
 			}
 			.board-wrapper .win-overlay::after {
-				content: 'Solved';
+				content: attr(data-overlay-text, 'Solved');
 				position: absolute;
 				right: 0.8rem;
 				top: -0.75rem;
 				padding: 0.2rem 0.6rem;
-				background: var(--solved-badge-bg);
-				color: var(--solved-badge-color);
+				background: var(--game-overlay-badge-bg, var(--solved-badge-bg));
+				color: var(--game-overlay-badge-color, var(--solved-badge-color));
 				font-size: 0.6rem;
 				font-weight: 600;
 				letter-spacing: 0.4em;
 				border-radius: 2px;
 			}
-			.board-wrapper.solved .win-overlay {
+			.board-wrapper[data-game-over="true"] .win-overlay {
 				opacity: 1;
 			}
 			@keyframes slide-glow {
@@ -1457,9 +1457,9 @@
 			</div>
 			<div class="board-actions" id="board-actions">
 				<div class="board-buttons">
-					<button id="reset" type="button" aria-label="Reset the Peg Solitaire board">Reset</button>
-					<button id="shape" type="button" aria-label="Change board shape">Shape</button>
+					<button id="shape" type="button" aria-label="Change board shape">Change board</button>
 					<button id="theme" type="button" aria-label="Switch theme">Theme</button>
+					<button id="reset" type="button" aria-label="Reset the Peg Solitaire board">Reset</button>
 					<button id="undo" type="button" aria-label="Undo last move">Undo</button>
 				</div>
 			</div>
@@ -1501,7 +1501,8 @@
 					<strong>Free Peg Solitaire Online (Ad-Free).</strong><br>
 					PegSolitaire.fun is a clean, modern version of the classic strategy puzzle.
 					Play on <strong>Triangle, English (Cross), and European boards</strong>.
-					Stuck? Use the <strong>instant Auto-Solver</strong> to watch the computer
+					Stuck? Use the <strong>instant Auto-Solver</strong>
+					to watch the computer
 					solve any board configuration. Works perfectly on mobile and desktop.
 				</p>
 				<div class="contact-modal__spacer" aria-hidden="true"></div>
