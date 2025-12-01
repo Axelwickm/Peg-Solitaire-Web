@@ -308,6 +308,7 @@
 				overflow: visible;
 				--light-x: 0;
 				--light-y: -1;
+				touch-action: none;
 			}
 			.board-background {
 				position: absolute;
@@ -402,6 +403,7 @@
 				overflow: hidden;
 				background: transparent;
 				z-index: 1;
+				touch-action: none;
 			}
 			body:not(.theme-light):not(.theme-dark):not(.theme-rose) #board::after {
 				content: '';
@@ -1498,8 +1500,8 @@
 				<button class="contact-modal__close" type="button" aria-label="Close contact info">&times;</button>
 				<h3 id="contact-modal-title">About</h3>
 				<p>
-					<strong>Free Peg Solitaire Online (Ad-Free).</strong><br>
-					PegSolitaire.fun is a clean, modern version of the classic strategy puzzle.
+					<strong>Free Peg Solitaire Online</strong><br>
+					PegSolitaire.fun is a clean, ad free, and fun version of of the classic strategy puzzle peg game.
 					Play on <strong>Triangle, English (Cross), and European boards</strong>.
 					Stuck? Use the <strong>instant Auto-Solver</strong>
 					to watch the computer

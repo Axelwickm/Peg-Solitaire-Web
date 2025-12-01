@@ -35,7 +35,7 @@ export class KongmingGame {
   private dragTargetKey: string | null = null;
   private dragHoverKey: string | null = null;
   private dragMoved = false;
-  private skipClickUntil = 0;
+  private skipNextClick = false;
   private selected: string | null = null;
   private pegs = new Set<string>();
   private validCells = new Set<string>();
@@ -92,6 +92,8 @@ export class KongmingGame {
   private readonly playLogKey = 'kongming-play-log';
   private readonly bestPlayKey = 'kongming-play-best';
   private bestPlayEntry: PlayLogEntry | null = null;
+  private dragWatchdogTimer: number | null = null;
+  private static readonly DRAG_WATCHDOG_TIMEOUT_MS = 5000;
   constructor(
     boardEl: HTMLElement,
     statusEl: HTMLElement,
@@ -420,8 +422,9 @@ export class KongmingGame {
 
   private handleHoleClick(key: string, event: MouseEvent): void {
     this.ensureBoardInteractive();
-    if (performance.now() < this.skipClickUntil) {
+    if (this.skipNextClick) {
       event.preventDefault();
+      this.skipNextClick = false;
       return;
     }
     if (this.pegs.has(key) && !this.pickablePegs.has(key)) {
@@ -435,13 +438,30 @@ export class KongmingGame {
   private onHoleClick(key: string): void {
     if (!this.validCells.has(key)) return;
     if (this.pegs.has(key)) {
-      this.selected = this.selected === key ? null : key;
+      const selectable = this.getSelectableTargets(key);
+      if (selectable.size === 0) {
+        if (this.selected !== null) {
+          this.selected = null;
+          this.render();
+        }
+        return;
+      }
+      if (this.selected === key) {
+        this.selected = null;
+        this.render();
+        return;
+      }
+      this.selected = key;
       this.render();
       return;
     }
     if (!this.selected) return;
     const move = this.validateMove(this.selected, key);
-    if (!move) return;
+    if (!move) {
+      this.selected = null;
+      this.render();
+      return;
+    }
     this.applyMove(this.selected, key, move.jump);
   }
 
@@ -533,6 +553,7 @@ export class KongmingGame {
     document.addEventListener('pointerup', this.boundDragEnd);
     document.addEventListener('pointercancel', this.boundDragEnd);
     event.preventDefault();
+    this.scheduleDragWatchdog();
   }
 
   private handleDragMove(event: PointerEvent): void {
@@ -551,12 +572,47 @@ export class KongmingGame {
       this.clearDragHover();
     }
     this.updateGhostPosition(event);
+    this.scheduleDragWatchdog();
   }
 
   private handleDragEnd(): void {
-    if (this.draggingPegKey && this.dragTargetKey && this.dragTargetKey !== this.draggingPegKey) {
-      this.attemptMove(this.draggingPegKey, this.dragTargetKey);
+    const hadValidMove =
+      !!(this.draggingPegKey && this.dragTargetKey && this.dragTargetKey !== this.draggingPegKey);
+    if (hadValidMove) {
+      this.attemptMove(this.draggingPegKey!, this.dragTargetKey!);
     }
+    const moved = this.dragMoved;
+    this.dragMoved = false;
+    this.completeDragInteraction();
+    if (hadValidMove && moved) {
+      this.skipNextClick = true;
+    }
+  }
+
+  private scheduleDragWatchdog(): void {
+    this.clearDragWatchdog();
+    this.dragWatchdogTimer = window.setTimeout(() => {
+      if (this.draggingPegKey) {
+        console.warn('[UI] Drag watchdog triggered');
+        this.cancelDragDueToWatchdog();
+      }
+    }, KongmingGame.DRAG_WATCHDOG_TIMEOUT_MS);
+  }
+
+  private clearDragWatchdog(): void {
+    if (this.dragWatchdogTimer !== null) {
+      window.clearTimeout(this.dragWatchdogTimer);
+      this.dragWatchdogTimer = null;
+    }
+  }
+
+  private cancelDragDueToWatchdog(): void {
+    if (!this.draggingPegKey) return;
+    this.dragMoved = false;
+    this.completeDragInteraction();
+  }
+
+  private completeDragInteraction(): void {
     this.draggingPegKey = null;
     this.dragTargetKey = null;
     this.draggingHole?.classList.remove('dragging');
@@ -566,9 +622,7 @@ export class KongmingGame {
     document.removeEventListener('pointermove', this.boundDragMove);
     document.removeEventListener('pointerup', this.boundDragEnd);
     document.removeEventListener('pointercancel', this.boundDragEnd);
-    if (this.dragMoved) {
-      this.skipClickUntil = performance.now() + 200;
-    }
+    this.clearDragWatchdog();
   }
 
   private attemptMove(from: string, to: string): boolean {
