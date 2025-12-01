@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "MAIN_SITE=${MAIN_SITE:-false}; rm -rf dist && mkdir -p dist && esbuild src/main.ts --bundle --outdir=dist --format=esm --splitting --minify --sourcemap --define:MAIN_SITE=${MAIN_SITE} && tsc --noEmit && cp index.html dist/index.html && cp -r static dist/static && cp static/favicon.ico dist/favicon.ico && cp sw.js dist/sw.js",
+    "build": "MAIN_SITE=${MAIN_SITE:-false}; rm -rf dist && mkdir -p dist && esbuild src/main.ts --bundle --outdir=dist --format=esm --splitting --minify --sourcemap --define:MAIN_SITE=${MAIN_SITE} && tsc --noEmit && cp index.html dist/index.html && cp -r static dist/static && cp static/favicon.ico dist/favicon.ico && cp static/robots.txt dist/robots.txt && cp sw.js dist/sw.js",
     "start": "MAIN_SITE=${MAIN_SITE:-false}; esbuild src/main.ts --bundle --outdir=. --format=esm --splitting --sourcemap --serve=8000 --servedir=. --define:MAIN_SITE=${MAIN_SITE}",
     "run": "npm run start"
   },
