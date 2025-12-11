@@ -36,6 +36,7 @@ export class KongmingGame {
   private dragHoverKey: string | null = null;
   private dragMoved = false;
   private skipNextClick = false;
+  private dragSelectableTargets: Set<string> | null = null;
   private selected: string | null = null;
   private pegs = new Set<string>();
   private validCells = new Set<string>();
@@ -164,7 +165,7 @@ export class KongmingGame {
     this.boardEl.innerHTML = '';
     this.holePositions.clear();
     this.boardEl.style.setProperty('--hole-size', `${20}px`);
-    this.holeHitRadius = 100;
+    this.holeHitRadius = 50;
     this.updatePegLightTarget();
     this.updatePickablePegs();
     const targetHoles = this.selected ? this.getSelectableTargets(this.selected) : new Set<string>();
@@ -546,6 +547,8 @@ export class KongmingGame {
     this.draggingPegKey = key;
     this.dragTargetKey = key;
     this.dragMoved = false;
+    this.dragSelectableTargets = this.getSelectableTargets(key);
+    this.dragSelectableTargets.add(key);
     this.draggingHole = this.getHoleElement(key);
     this.draggingHole?.classList.add('dragging');
     this.createGhostPeg(event);
@@ -559,7 +562,7 @@ export class KongmingGame {
   private handleDragMove(event: PointerEvent): void {
     if (!this.draggingPegKey) return;
     this.dragMoved = true;
-    const targetKey = this.getHoleKeyFromPoint(event);
+    const targetKey = this.getHoleKeyFromPoint(event, this.dragSelectableTargets);
     this.dragTargetKey = targetKey;
     const canDrop =
       !!targetKey &&
@@ -615,6 +618,7 @@ export class KongmingGame {
   private completeDragInteraction(): void {
     this.draggingPegKey = null;
     this.dragTargetKey = null;
+    this.dragSelectableTargets = null;
     this.draggingHole?.classList.remove('dragging');
     this.draggingHole = null;
     this.clearDragHover();
@@ -671,8 +675,11 @@ export class KongmingGame {
     return this.boardEl.querySelector(`[data-pos="${key}"]`);
   }
 
-  private getHoleKeyFromPoint(event: PointerEvent): string | null {
+  private getHoleKeyFromPoint(event: PointerEvent, validTargets: Set<string> | null = null): string | null {
     const boardRect = this.boardEl.getBoundingClientRect();
+    if (validTargets && validTargets.size === 0) {
+      return null;
+    }
     if (boardRect.width && boardRect.height && this.holePositions.size > 0) {
       const targetX = event.clientX - boardRect.left;
       const targetY = event.clientY - boardRect.top;
@@ -680,6 +687,9 @@ export class KongmingGame {
       let nearestDist = Infinity;
 
       this.holePositions.forEach((position, key) => {
+        if (validTargets && !validTargets.has(key)) {
+          return;
+        }
         const holeX = position.x * boardRect.width;
         const holeY = position.y * boardRect.height;
         const dx = holeX - targetX;
@@ -697,10 +707,10 @@ export class KongmingGame {
       }
     }
 
-    return this.findHoleKeyFromElement(event);
+    return this.findHoleKeyFromElement(event, validTargets);
   }
 
-  private findHoleKeyFromElement(event: PointerEvent): string | null {
+  private findHoleKeyFromElement(event: PointerEvent, validTargets: Set<string> | null = null): string | null {
     let target: Element | null = document.elementFromPoint(event.clientX, event.clientY);
     while (target && target !== this.boardEl) {
       if (target instanceof HTMLElement && target.classList.contains('hole')) {
@@ -709,7 +719,11 @@ export class KongmingGame {
       target = target.parentElement;
     }
     if (target instanceof HTMLElement && target.dataset.pos) {
-      return target.dataset.pos;
+      const pos = target.dataset.pos;
+      if (validTargets && !validTargets.has(pos)) {
+        return null;
+      }
+      return pos;
     }
     return null;
   }
